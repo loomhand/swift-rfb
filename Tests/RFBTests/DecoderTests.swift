@@ -345,6 +345,40 @@ import Testing
         task.cancel()
     }
 
+    @Test func emptyZRLERectKeepsStreamAligned() async throws {
+        let (server, _, events, task) = await connect()
+        let deflater = Deflater()
+        var b = Bytes()
+        let empty = deflater.compress([])
+        b.rect(0, 0, 0, 0, .zrle); b.u32(empty.count); b.append(empty)
+        let solid = deflater.compress([1, 0x11, 0x22, 0x33])
+        b.rect(2, 2, 3, 3, .zrle); b.u32(solid.count); b.append(solid)
+        await server.send(update(2, b.data))
+        let (fb, _) = try #require(await events.update())
+        #expect(pixels(fb, RFBRect(x: 2, y: 2, width: 3, height: 3)) == [UInt32](repeating: 0x332211, count: 9))
+        task.cancel()
+    }
+
+    @Test func zlibStreamEndWithTrailingBytesTerminates() async throws {
+        let (server, _, events, task) = await connect()
+        var finished = Array(try #require(Data(base64Encoded: "eJxjZGRiBgAAEgAI")))
+        finished += [0xAB, 0xCD]
+        var b = Bytes()
+        b.rect(0, 0, 1, 1, .zrle); b.u32(finished.count); b.append(finished)
+        await server.send(update(1, b.data))
+        let (fb, _) = try #require(await events.update())
+        #expect(pixels(fb, RFBRect(x: 0, y: 0, width: 1, height: 1)) == [0x030201])
+        task.cancel()
+    }
+
+    @Test func minimumCutTextLengthIsRejected() async throws {
+        let (server, _, _, task) = await connect()
+        var b = Bytes()
+        b.u8(3); b.append([0, 0, 0]); b.u32(0x8000_0000); b.u32(Int(Clipboard.provide | Clipboard.text))
+        await server.send(b.data)
+        await #expect(throws: RFBError.self) { try await task.value }
+    }
+
     @Test func rectOutsideFramebufferIsRejected() async throws {
         let (server, _, _, task) = await connect()
         var b = Bytes()
