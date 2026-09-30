@@ -73,7 +73,7 @@ ImageIO's per-rectangle cost dominates this.
 
 ## First frame
 
-This is the median of five runs at `region` mode, measured from the start of the TCP connect.
+This is the median of five runs at `full` mode, measured from the start of the TCP connect.
 
 - **first update** is when the first update with pixels has been decoded. `royalvnc-view` prints its
   number when that update is handed to its view, so the two first-update columns compare like for like.
