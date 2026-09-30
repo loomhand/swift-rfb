@@ -99,7 +99,8 @@ final class ZRLEDecoder: RectDecoder {
     func decode(_ rect: RFBRect, from reader: Reader, into framebuffer: RFBFramebuffer) async throws {
         let length = Int(try await reader.readU32())
         try await reader.need(length)
-        let produced = try inflater.inflate(reader.bytes(length), into: &scratch)
+        let tileCount = (rect.width + 63) / 64 * ((rect.height + 63) / 64)
+        let produced = try inflater.inflate(reader.bytes(length), into: &scratch, limit: rect.width * rect.height * 4 + tileCount * 400)
         scratch.reserve(produced + 4, keeping: produced)
         try tiles(UnsafeRawBufferPointer(start: scratch.base, count: produced), rect, framebuffer)
     }

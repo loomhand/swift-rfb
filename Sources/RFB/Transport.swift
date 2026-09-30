@@ -70,6 +70,10 @@ public final class RFBTCPTransport: RFBTransport {
         executor = QueueExecutor(queue)
     }
 
+    deinit {
+        connection.cancel()
+    }
+
     // connect resolves once the connection is established.
     public func connect() async throws {
         try await withTaskCancellationHandler {
@@ -79,7 +83,9 @@ public final class RFBTCPTransport: RFBTransport {
                     let outcome: Result<Void, any Error>
                     switch state {
                     case .ready: outcome = .success(())
-                    case .failed(let error), .waiting(let error): outcome = .failure(RFBError.transport("\(error)"))
+                    case .failed(let error), .waiting(let error):
+                        self?.connection.cancel()
+                        outcome = .failure(RFBError.transport("\(error)"))
                     case .cancelled: outcome = .failure(RFBError.connectionClosed)
                     default: return
                     }

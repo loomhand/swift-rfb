@@ -5,6 +5,8 @@ import Synchronization
 
 // rfb-view HOST:PORT [--password PW] [--control] [--encodings tight,zrle,...]
 //         [--jpeg 0-9|off] [--no-continuous] [--seconds N] [--exit-after-first-frame]
+//         [--self-test]  (control mode: after the first frame, clicks framebuffer
+//                         point 123,456 and types "ab" through synthetic AppKit events)
 
 @MainActor
 final class Viewer: NSObject, NSApplicationDelegate, NSWindowDelegate {
@@ -13,6 +15,7 @@ final class Viewer: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let configuration: RFBClient.Configuration
     let seconds: Double?
     let exitAfterFirstFrame: Bool
+    let selfTest: Bool
     let startControl: Bool
     let started = ContinuousClock.now
     var connectStarted = ContinuousClock.now
@@ -28,6 +31,7 @@ final class Viewer: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var seconds: Double?
         var exitAfterFirstFrame = false
         var control = false
+        var selfTest = false
         var args = arguments.makeIterator()
         while let arg = args.next() {
             switch arg {
@@ -37,6 +41,7 @@ final class Viewer: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case "--jpeg": configuration.jpegQuality = Int(args.next() ?? "off")
             case "--seconds": seconds = Double(args.next() ?? "")
             case "--exit-after-first-frame": exitAfterFirstFrame = true
+            case "--self-test": selfTest = true
             case "--encodings":
                 configuration.encodings = (args.next() ?? "").split(separator: ",").compactMap { name in
                     ["raw": RFBEncoding.raw, "copyrect": .copyRect, "hextile": .hextile, "tight": .tight, "zrle": .zrle][String(name)]
@@ -51,7 +56,8 @@ final class Viewer: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.configuration = configuration
         self.seconds = seconds
         self.exitAfterFirstFrame = exitAfterFirstFrame
-        startControl = control
+        startControl = control || selfTest
+        self.selfTest = selfTest
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -66,6 +72,7 @@ final class Viewer: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let now = ContinuousClock.now
             print("first_frame_ms=\(Self.ms(now - started)) since_connect_ms=\(Self.ms(now - connectStarted))")
             if exitAfterFirstFrame { NSApp.terminate(nil) }
+            if selfTest { runSelfTest() }
         }
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.contentView = view
@@ -114,6 +121,29 @@ final class Viewer: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             await MainActor.run { NSApp.terminate(nil) }
         }
+    }
+
+    // runSelfTest drives RFBView through the same AppKit entry points a
+    // user's mouse and keyboard reach.
+    func runSelfTest() {
+        guard let view, let window, let point = view.viewPoint(framebufferX: 123, y: 456) else { return }
+        let location = view.convert(point, to: nil)
+        func mouse(_ type: NSEvent.EventType) -> NSEvent? {
+            NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                               context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+        }
+        func key(_ type: NSEvent.EventType, _ code: UInt16, _ chars: String) -> NSEvent? {
+            NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                             context: nil, characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)
+        }
+        mouse(.mouseMoved).map(view.mouseMoved)
+        mouse(.leftMouseDown).map(view.mouseDown)
+        mouse(.leftMouseUp).map(view.mouseUp)
+        for (code, chars) in [(UInt16(0x00), "a"), (0x0B, "b")] {
+            key(.keyDown, code, chars).map(view.keyDown)
+            key(.keyUp, code, chars).map(view.keyUp)
+        }
+        print("self_test_sent")
     }
 
     func connected(_ info: RFBServerInfo) {

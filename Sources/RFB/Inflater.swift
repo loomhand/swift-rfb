@@ -10,10 +10,7 @@ final class Inflater {
         stream = .allocate(capacity: 1)
         stream.initialize(to: z_stream())
         let status = inflateInit_(stream, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size))
-        guard status == Z_OK else {
-            stream.deallocate()
-            throw RFBError.protocolViolation("inflateInit \(status)")
-        }
+        guard status == Z_OK else { throw RFBError.protocolViolation("inflateInit \(status)") }
     }
 
     deinit {
@@ -26,8 +23,8 @@ final class Inflater {
     }
 
     // inflate feeds all of input and returns the bytes written to output,
-    // growing it as needed; exact, when given, must match that count.
-    func inflate(_ input: UnsafeRawBufferPointer, into output: inout Scratch, exact: Int? = nil) throws -> Int {
+    // growing it up to limit; exact, when given, must match that count.
+    func inflate(_ input: UnsafeRawBufferPointer, into output: inout Scratch, exact: Int? = nil, limit: Int = 64 << 20) throws -> Int {
         if let exact { output.reserve(exact + 1) }
         stream.pointee.next_in = UnsafeMutablePointer(mutating: input.baseAddress?.assumingMemoryBound(to: Bytef.self))
         stream.pointee.avail_in = uInt(input.count)
@@ -35,15 +32,16 @@ final class Inflater {
         repeat {
             if produced == output.capacity {
                 if let exact, produced > exact { break }
-                output.reserve(output.capacity * 2, keeping: produced)
+                guard produced < limit else { throw RFBError.protocolViolation("zlib data exceeds \(limit) bytes") }
+                output.reserve(min(output.capacity * 2, limit + 1), keeping: produced)
             }
             let room = output.capacity - produced
             stream.pointee.next_out = (output.base + produced).assumingMemoryBound(to: Bytef.self)
             stream.pointee.avail_out = uInt(room)
             let status = zlib.inflate(stream, Z_SYNC_FLUSH)
             produced += room - Int(stream.pointee.avail_out)
-            if status == Z_BUF_ERROR { break }
-            guard status == Z_OK || status == Z_STREAM_END else {
+            if status == Z_BUF_ERROR || status == Z_STREAM_END { break }
+            guard status == Z_OK else {
                 throw RFBError.protocolViolation("inflate \(status)")
             }
         } while stream.pointee.avail_in > 0 || stream.pointee.avail_out == 0

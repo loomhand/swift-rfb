@@ -6,8 +6,9 @@ import RFB
 import Synchronization
 
 // RFBView shows an RFB session: pass eventHandler to RFBClient.run and set
-// client to send input. It draws on the display link only after a change
-// and asks for the next update once the GPU has consumed the frame.
+// client, which carries input and the consumption that paces updates. It
+// draws on the display link only after a change and asks for the next
+// update once the GPU has consumed the frame.
 @MainActor
 public final class RFBView: NSView {
     public var client: RFBClient?
@@ -48,7 +49,7 @@ public final class RFBView: NSView {
     private var pressed: [UInt16: UInt32] = [:]
     private var scroll = CGPoint.zero
     private var trackingArea: NSTrackingArea?
-    private var occlusion: (any NSObjectProtocol)?
+    private var observers: [any NSObjectProtocol] = []
 
     public init?(device: MTLDevice? = MTLCreateSystemDefaultDevice()) {
         guard let device, let renderer = RFBRenderer(device: device) else { return nil }
@@ -163,7 +164,7 @@ public final class RFBView: NSView {
         link?.isPaused = false
     }
 
-    @objc private func tick(_ link: CADisplayLink) {
+    fileprivate func tick(_ link: CADisplayLink) {
         link.isPaused = true
         guard window?.occlusionState.contains(.visible) == true else { return }
         guard dirty.exchange(false, ordering: .acquiringAndReleasing) else { return }
@@ -189,16 +190,22 @@ public final class RFBView: NSView {
         super.viewDidMoveToWindow()
         link?.invalidate()
         link = nil
-        if let occlusion { NotificationCenter.default.removeObserver(occlusion) }
-        occlusion = nil
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers = []
         guard let window else { return }
-        let link = displayLink(target: self, selector: #selector(tick(_:)))
+        let link = displayLink(target: LinkTarget(self), selector: #selector(LinkTarget.tick(_:)))
         link.isPaused = true
         link.add(to: .main, forMode: .common)
         self.link = link
-        occlusion = NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.wake() }
-        }
+        let center = NotificationCenter.default
+        observers = [
+            center.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.wake() }
+            },
+            center.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.releaseInput() }
+            },
+        ]
         needsLayout = true
     }
 
@@ -284,11 +291,19 @@ public final class RFBView: NSView {
     public override func mouseUp(with event: NSEvent) { pointer(event, .left, down: false) }
     public override func rightMouseDown(with event: NSEvent) { pointer(event, .right, down: true) }
     public override func rightMouseUp(with event: NSEvent) { pointer(event, .right, down: false) }
-    public override func otherMouseDown(with event: NSEvent) { pointer(event, .middle, down: true) }
-    public override func otherMouseUp(with event: NSEvent) { pointer(event, .middle, down: false) }
+    public override func otherMouseDown(with event: NSEvent) { pointer(event, event.buttonNumber == 2 ? .middle : [], down: true) }
+    public override func otherMouseUp(with event: NSEvent) { pointer(event, event.buttonNumber == 2 ? .middle : [], down: false) }
 
+    // pointer drops presses and moves outside the framebuffer but clamps the
+    // rest, so a drag released in the letterbox still releases remotely.
     private func pointer(_ event: NSEvent, _ button: RFBButtons = [], down: Bool = false) {
-        guard isInputEnabled, let client, let point = framebufferPoint(convert(event.locationInWindow, from: nil)) else { return }
+        guard isInputEnabled, let client else { return }
+        let location = convert(event.locationInWindow, from: nil)
+        let rect = contentRect
+        let inside = framebufferPoint(location) != nil
+        guard inside || (!down && !buttons.isEmpty) else { return }
+        let clamped = CGPoint(x: min(max(location.x, rect.minX), rect.maxX - 0.5), y: min(max(location.y, rect.minY), rect.maxY - 0.5))
+        guard let point = framebufferPoint(clamped) else { return }
         if down {
             buttons.insert(button)
             window?.makeFirstResponder(self)
@@ -342,6 +357,9 @@ public final class RFBView: NSView {
             return
         }
         let down = event.modifierFlags.contains(flag) && pressed[event.keyCode] == nil
+        if flag == .command, !down {
+            releaseKeys { Self.modifierFlag($0) == nil }
+        }
         if down {
             pressed[event.keyCode] = keysym
         } else {
@@ -356,12 +374,18 @@ public final class RFBView: NSView {
         client?.type(text)
     }
 
+    // releaseKeys lifts held keys: AppKit sends no keyUp for keys released
+    // while Command is down, nor any key event once the window loses focus.
+    private func releaseKeys(where matches: (UInt16) -> Bool = { _ in true }) {
+        for (keyCode, keysym) in pressed where matches(keyCode) {
+            client?.key(keysym, down: false, scancode: RFBKeyMap.scancode(keyCode: keyCode))
+            pressed[keyCode] = nil
+        }
+    }
+
     private func releaseInput() {
         guard let client else { return }
-        for (keyCode, keysym) in pressed {
-            client.key(keysym, down: false, scancode: RFBKeyMap.scancode(keyCode: keyCode))
-        }
-        pressed = [:]
+        releaseKeys()
         if !buttons.isEmpty {
             buttons = []
             if let point = window.flatMap({ framebufferPoint(convert($0.mouseLocationOutsideOfEventStream, from: nil)) }) {
@@ -379,6 +403,20 @@ public final class RFBView: NSView {
         case 0x39: .capsLock
         default: nil
         }
+    }
+}
+// LinkTarget keeps the display link from retaining the view.
+@MainActor
+private final class LinkTarget: NSObject {
+    weak var view: RFBView?
+
+    init(_ view: RFBView) {
+        self.view = view
+    }
+
+    @objc func tick(_ link: CADisplayLink) {
+        guard let view else { return link.invalidate() }
+        view.tick(link)
     }
 }
 #endif

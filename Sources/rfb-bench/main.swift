@@ -170,7 +170,7 @@ func loadRecording(_ path: String) throws -> (Options, Data) {
     guard file.prefix(4) == Data("RFBR".utf8) else { throw RFBError.protocolViolation("not a recording") }
     let length = file[4..<8].reduce(0) { $0 << 8 | Int($1) }
     let header = try JSONSerialization.jsonObject(with: file[8..<(8 + length)]) as? [String: String] ?? [:]
-    var args: [String] = ["--encodings", header["encodings"] ?? "", "--jpeg", header["jpeg"] ?? "off"]
+    var args: [String] = ["--encodings", header["encodings"] ?? "", "--jpeg", header["jpeg"] ?? "off", "--password", "replay"]
     if header["continuous"] == "0" { args.append("--no-continuous") }
     return (Options(args[...]), file.subdata(in: (8 + length)..<file.count))
 }

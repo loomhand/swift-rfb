@@ -69,7 +69,6 @@ final class Session {
                 guard let framebuffer, rect.x + rect.width <= framebuffer.width, rect.y + rect.height <= framebuffer.height else {
                     throw RFBError.protocolViolation("\(encoding) rect \(rect) outside framebuffer")
                 }
-                if rect.isEmpty { continue }
                 if collects {
                     let before = reader.consumed
                     let clock = ContinuousClock.now
@@ -84,6 +83,7 @@ final class Session {
                 }
                 dirty = dirty.union(rect)
             } else {
+                if encoding == .desktopSize || encoding == .extendedDesktopSize { dirty = RFBRect(x: 0, y: 0, width: 0, height: 0) }
                 try await pseudo(encoding, rect)
                 if collects {
                     client.shared.withLock { $0.statistics.encodings[encoding, default: .init()].rects += 1 }
@@ -146,6 +146,7 @@ final class Session {
     }
 
     private func cursor(_ rect: RFBRect) async throws {
+        guard rect.width <= 1024, rect.height <= 1024 else { throw RFBError.protocolViolation("cursor \(rect)") }
         let maskRow = (rect.width + 7) / 8
         let count = rect.width * rect.height
         try await reader.need(count * 4 + maskRow * rect.height)
@@ -183,7 +184,7 @@ final class Session {
             events(.clipboard(String(data: data, encoding: .isoLatin1) ?? ""))
             return
         }
-        let size = Int(-length)
+        let size = -Int(length)
         guard size >= 4 else { throw RFBError.protocolViolation("extended clipboard length \(size)") }
         let flags = try await reader.readU32()
         let payload = try await reader.readData(size - 4)

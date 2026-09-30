@@ -53,8 +53,8 @@ struct ExtendedClipboard {
 
     static func unpack(_ payload: Data) throws -> String {
         let inflater = try Inflater()
-        var scratch = Scratch(capacity: max(4096, payload.count * 4))
-        let produced = try payload.withUnsafeBytes { try inflater.inflate($0, into: &scratch) }
+        var scratch = Scratch(capacity: 4096)
+        let produced = try payload.withUnsafeBytes { try inflater.inflate($0, into: &scratch, limit: Int(maxText) + 4) }
         guard produced >= 4 else { throw RFBError.protocolViolation("clipboard provide of \(produced) bytes") }
         let bytes = UnsafeRawBufferPointer(start: scratch.base, count: produced)
         let length = Int(UInt32(bytes[0]) << 24 | UInt32(bytes[1]) << 16 | UInt32(bytes[2]) << 8 | UInt32(bytes[3]))
