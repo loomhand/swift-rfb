@@ -4,7 +4,7 @@ import Synchronization
 
 // rfb-bench live      HOST:PORT [--seconds N] [options] [--record FILE]
 // rfb-bench replay    FILE [--iterations N]
-// rfb-bench input     HOST:PORT --move X,Y [--click] [--type TEXT]
+// rfb-bench input     HOST:PORT --move X,Y [--click] [--type TEXT] [--keys 0x00,0x24 (macOS key codes)]
 // rfb-bench clipboard HOST:PORT [--set TEXT] [--seconds N]
 // options: --encodings tight,zrle,hextile,raw  --jpeg 0-9|off  --no-continuous  --password PW
 
@@ -16,6 +16,7 @@ struct Options {
     var move: (x: Int, y: Int)?
     var click = false
     var text: String?
+    var keyCodes: [UInt16]?
     var positional: [String] = []
 
     init(_ arguments: ArraySlice<String>) {
@@ -28,6 +29,7 @@ struct Options {
             case "--iterations": iterations = Int(args.next() ?? "") ?? iterations
             case "--record": record = args.next()
             case "--click": click = true
+            case "--keys": keyCodes = (args.next() ?? "").split(separator: ",").compactMap { UInt16($0.dropFirst(2), radix: 16) }
             case "--type", "--set": text = args.next()
             case "--move":
                 let xy = (args.next() ?? "").split(separator: ",").compactMap { Int($0) }
@@ -224,10 +226,14 @@ func interact(_ options: Options, act: @escaping @Sendable (RFBClient) -> Void) 
     }
 }
 
+// usLetters is the US layout for the key codes --keys accepts.
+let usLetters: [UInt16: Unicode.Scalar] = [0x00: "a", 0x0B: "b", 0x08: "c", 0x02: "d", 0x0E: "e", 0x12: "1", 0x31: " "]
+
 func input(_ options: Options) async throws {
     let move = options.move
     let click = options.click
     let text = options.text
+    let options = options
     try await interact(options) { client in
         if let move {
             client.pointer(x: move.x, y: move.y, buttons: [])
@@ -237,6 +243,13 @@ func input(_ options: Options) async throws {
             }
         }
         if let text { client.type(text) }
+        if let keys = options.keyCodes {
+            for keyCode in keys {
+                guard let keysym = RFBKeyMap.keysym(keyCode: keyCode, characters: nil) ?? usLetters[keyCode].flatMap(RFBKeyMap.keysym(for:)) else { continue }
+                client.key(keysym, down: true, scancode: RFBKeyMap.scancode(keyCode: keyCode))
+                client.key(keysym, down: false, scancode: RFBKeyMap.scancode(keyCode: keyCode))
+            }
+        }
         print("sent input")
     }
 }

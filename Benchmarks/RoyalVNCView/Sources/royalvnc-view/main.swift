@@ -11,6 +11,7 @@ final class Viewer: NSObject, NSApplicationDelegate, VNCConnectionDelegate {
     var exitAfterFirstFrame = false
     var firstUpdate = false
     let started = Date()
+    var connectStarted = Date()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         var positional: [String] = []
@@ -40,6 +41,7 @@ final class Viewer: NSObject, NSApplicationDelegate, VNCConnectionDelegate {
         NSApp.activate(ignoringOtherApps: true)
         connection = VNCConnection(settings: settings)
         connection.delegate = self
+        connectStarted = Date()
         connection.connect()
         if let seconds {
             DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { NSApp.terminate(nil) }
@@ -77,7 +79,7 @@ final class Viewer: NSObject, NSApplicationDelegate, VNCConnectionDelegate {
         guard !firstUpdate else { return }
         firstUpdate = true
         DispatchQueue.main.async { [self] in
-            print(String(format: "first_frame_ms=%.1f", Date().timeIntervalSince(started) * 1000))
+            print(String(format: "first_frame_ms=%.1f since_connect_ms=%.1f", Date().timeIntervalSince(started) * 1000, Date().timeIntervalSince(connectStarted) * 1000))
             if exitAfterFirstFrame { NSApp.terminate(nil) }
         }
     }

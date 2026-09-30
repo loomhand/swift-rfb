@@ -168,10 +168,10 @@ public final class RFBView: NSView {
         guard window?.occlusionState.contains(.visible) == true else { return }
         guard dirty.exchange(false, ordering: .acquiringAndReleasing) else { return }
         let (surface, cursor, pointer) = scene.withLock { ($0.surface, $0.cursor, $0.pointer) }
-        guard let surface, !metalLayer.isHidden else { return }
+        guard let surface, !metalLayer.isHidden, hasContent.load(ordering: .relaxed) else { return }
         let overlay = !isInputEnabled ? cursor.flatMap { c in pointer.map { (c, $0.x, $0.y) } } : nil
         let client = client
-        let first = !presentedFirst && hasContent.load(ordering: .relaxed)
+        let first = !presentedFirst
         var presented: (@Sendable () -> Void)?
         if first {
             presented = { [weak self] in

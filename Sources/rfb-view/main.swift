@@ -1,6 +1,7 @@
 import AppKit
 import RFB
 import RFBMetal
+import Synchronization
 
 // rfb-view HOST:PORT [--password PW] [--control] [--encodings tight,zrle,...]
 //         [--jpeg 0-9|off] [--no-continuous] [--seconds N] [--exit-after-first-frame]
@@ -14,6 +15,7 @@ final class Viewer: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let exitAfterFirstFrame: Bool
     let startControl: Bool
     let started = ContinuousClock.now
+    var connectStarted = ContinuousClock.now
     var window: NSWindow?
     var view: RFBView?
     var client: RFBClient?
@@ -61,7 +63,8 @@ final class Viewer: NSObject, NSApplicationDelegate, NSWindowDelegate {
         view.isInputEnabled = startControl
         view.onFirstFrame = { [weak self] in
             guard let self else { return }
-            print("first_frame_ms=\(Self.ms(ContinuousClock.now - started))")
+            let now = ContinuousClock.now
+            print("first_frame_ms=\(Self.ms(now - started)) since_connect_ms=\(Self.ms(now - connectStarted))")
             if exitAfterFirstFrame { NSApp.terminate(nil) }
         }
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
@@ -85,6 +88,9 @@ final class Viewer: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.client = client
         view?.client = client
         let handler = view?.eventHandler
+        let firstUpdate = Mutex(false)
+        connectStarted = ContinuousClock.now
+        let connectStarted = connectStarted
         session = Task { [weak self] in
             do {
                 try await transport.connect()
@@ -95,6 +101,10 @@ final class Viewer: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         Task { @MainActor in self?.connected(info) }
                     case .clipboard(let text):
                         Task { @MainActor in self?.remoteClipboard(text) }
+                    case .updated:
+                        if firstUpdate.withLock({ f in defer { f = true }; return !f }) {
+                            print("first_update_since_connect_ms=\(Viewer.ms(ContinuousClock.now - connectStarted))")
+                        }
                     default:
                         break
                     }
@@ -159,7 +169,7 @@ final class Viewer: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.mainMenu = main
     }
 
-    static func ms(_ d: Duration) -> String {
+    nonisolated static func ms(_ d: Duration) -> String {
         String(format: "%.1f", Double(d.components.seconds) * 1e3 + Double(d.components.attoseconds) / 1e15)
     }
 }
