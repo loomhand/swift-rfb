@@ -178,6 +178,49 @@ The idle screen is unchanged with the pacer on: 0.01% CPU, 1.3 context
 switches/s and 0.4 interrupt wakeups/s. The timer stops a second after the
 last update.
 
+## In the cocoonbox app
+
+This compares cocoonbox feat/swift-rfb against the same commit (0a525ca)
+built with RoyalVNCKit behind a loopback bridge and UpdatePump. Both are
+release bundles from `scripts/bundle.sh`. The autopilot waits for the live
+screen, then the process is sampled with `procstat` for 19 s. Each row is two
+runs, given as a range. Against the real box the runs were read-only: view only,
+no ensure, no Hibernate and no agent turns.
+
+**MockBox** (synthetic 1280x800 desktop, Raw only, local gRPC):
+
+| scene | app | CPU % | context switches/s | interrupt wakeups/s | footprint MB | updates/s |
+|---|---|---|---|---|---|---|
+| idle | swift-rfb | 0.03 | 2.1–2.3 | 0.6–0.7 | 44–45 | — |
+| idle | RoyalVNCKit | 1.36–1.51 | 373–375 | 93.2–93.6 | 50–70 | — |
+| 30 fps lane (about 9 MB/s Raw) | swift-rfb | 20.0–20.3 | 4 144–4 161 | 215 | 54–55 | 30.3 |
+| 30 fps lane | RoyalVNCKit | 26.4 | 6 508–6 535 | 168–169 | 60–61 | 30.3 |
+
+First update after connect: 27–42 ms against 41–50 ms. The frame then reaches
+the display 5–11 ms later with swift-rfb, against about 25 ms with RoyalVNCKit.
+
+**Real box** (bench-1, x11vnc, 1280x800, about 230 ms RTT):
+
+| | swift-rfb | RoyalVNCKit |
+|---|---|---|
+| idle CPU % | 0.29–0.30 | 1.16–1.17 |
+| context switches/s | 32.6–32.9 | 373–376 |
+| interrupt wakeups/s | 6.3–6.4 | 95.7–95.8 |
+| first update, first session | 1 695–2 086 ms | 2 398–2 465 ms |
+| first update, new session on a warm connection (`reopen-screen`) | 1 339–1 348 ms | 1 765–1 793 ms |
+| same, with `eagerHandshake` | 311–770 ms | — |
+
+- **Idle wakeups.** The remaining swift-rfb wakeups on the real box come from
+  the app's gRPC connection and its event stream. The request pacer adds a
+  1-second burst after each screen change.
+- **Handshake round trips.** Against x11vnc the coalesced handshake saves about
+  2 round trips over RoyalVNCKit, and eager saves about 2 more. Eager leaves one
+  round trip plus x11vnc's pause before it serves a new client, which varied
+  from under 100 ms to about 450 ms.
+- **Throughput.** The real screen was idle during the runs, and read-only runs
+  cannot make it change. So its update rate comes from the netem and MockBox
+  measurements above.
+
 ## Decode throughput
 
 `rfb-bench live --record` captured 8 s of the `full` scene from each server, for each encoding. The
