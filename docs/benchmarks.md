@@ -93,6 +93,91 @@ Two effects add noise:
   Both clients hit this: RoyalVNCKit once measured 2 057 ms, swift-rfb 1 719 ms. These runs are
   outliers and are left out of the medians.
 
+## High-latency path (netem, 120 ms each way)
+
+`scripts/servers.sh MODE 30 120` adds netem delay to both directions of each
+container's interface, through an ifb device for ingress. A raw-socket
+version exchange measures 241–242 ms RTT.
+
+### Handshake round trips
+
+Protocol round trips from the start of the TCP connect to ServerInit. The TCP
+connect and the server's banner take 2 RTT on their own.
+
+| client | the client waits on | ServerInit | first update begins |
+|---|---|---|---|
+| before (one write per message, waits for every reply) | version → security list, choice → SecurityResult, ClientInit → ServerInit, request → update | 5 RTT | 6 RTT |
+| **coalesced** (default) | version → security list; then security choice, ClientInit, SetPixelFormat, SetEncodings and the first request go out in one write | **4 RTT** | **4 RTT**, in the same flight as ServerInit |
+| **eager** (`eagerHandshake`) | nothing: the whole client side is sent before the banner | **2 RTT** | **2 RTT** |
+
+Measured with `rfb-bench live --seconds 3.5` at the `full` scene. The before
+column is the same binary built at de93977.
+
+| server | client | ServerInit ms | first update decoded, ms |
+|---|---|---|---|
+| TigerVNC | before | — | 2 177, 2 424, 2 439 |
+| TigerVNC | coalesced | 969, 970, 970 | 1 697, 1 700, 1 700 |
+| TigerVNC | eager | 484, 486, 488 | 1 212, 1 453, 1 457 |
+| TigerVNC | RoyalVNCKit | — | 2 437, 2 438, 2 441 |
+| x11vnc | before | — | 2 272, 2 472 (one run timed out) |
+| x11vnc | coalesced | 1 239, 1 262, 1 265 | 1 764, 1 778, 1 990 |
+| x11vnc | eager | 609, 654, 670 | 1 332, 1 379, 1 396 |
+| x11vnc | RoyalVNCKit | — | 2 154, 2 158, 2 185 |
+
+ServerInit lands on whole RTTs. On x11vnc it arrives 100–290 ms later, because
+x11vnc is slow to send its banner. After ServerInit, the rest of the
+first-update time is TCP slow start on a cold connection: the first update is
+93–126 KB, which takes 3 more RTTs at the initial congestion window. The app
+carries RFB inside an already-warm gRPC/HTTP-2 connection, which removes both
+the TCP connect and slow start. There, the coalesced handshake costs 2 client
+round trips after the banner and the eager one costs none.
+
+### Updates per second on a changing screen
+
+`scripts/wan-pacing.sh` runs `rfb-bench live --eager` for 15 s against each
+server. The "UpdatePump" rows put cocoonbox's `UpdatePump`, copied verbatim
+from feat/macos@0ef99a3 into `Benchmarks/PumpProxy`, between swift-rfb (with
+its own pacer off) and x11vnc, as the app's ScreenBridge does today.
+
+| server | request strategy | `region` updates/s | `full` updates/s | `full` wire MB/s |
+|---|---|---|---|---|
+| x11vnc | one request per update | 2.3 | 2.6 | 0.21 |
+| x11vnc | cocoonbox UpdatePump (33 ms) | 25.5 | 27.6 | 2.15 |
+| x11vnc | **swift-rfb pacer (33 ms)** | **26.5** | **28.1** | 2.25 |
+| TigerVNC | **ContinuousUpdates + Fence** (default) | **45.4** | **43.3** | 2.49 |
+| TigerVNC | no CU, one request per update | 3.7 | 3.7 | 0.39 |
+| TigerVNC | no CU, swift-rfb pacer | 43.7 | 41.6 | 2.43 |
+
+- x11vnc 0.9.16 offers neither ContinuousUpdates nor Fence. TigerVNC 1.12
+  offers both, sending about 2 fences per update, and swift-rfb enables them.
+- Neither server answers faster when several requests are sent at once.
+  libvncserver ORs outstanding requests into one requested region and clears
+  it when it sends an update, and TigerVNC merges them the same way. So
+  requests have to arrive spread out in time. Pipelining N requests per update
+  (depth 1–6, tried first) stalls at 6.7 updates/s. A request every 33 ms while
+  updates flow matches the pump.
+- The pacer matches the pump on x11vnc: 26.5 vs 25.5 and 28.1 vs 27.6
+  updates/s. It is built into the client and costs nothing when idle, so the
+  app's pump can go.
+- The original pump did not work at all with swift-rfb. Its `RFBClientTap`
+  parses an extended ClientCutText's negative length as about 4 GB and holds
+  every later client message. swift-rfb's clipboard caps reply is such a
+  message, and the copy used here patches that one line. If the pump lived on,
+  it would need that fix.
+
+### Cost on a local path
+
+Measured on the `full` scene with no delay, 20 s windows, `rfb-view`:
+
+| x11vnc | CPU % | ctx switches/s | interrupt wakeups/s | updates/s (bench) |
+|---|---|---|---|---|
+| pacer on (default) | 10.8 | 1 763 | 147 | 37.2–37.5 |
+| pacer off | 10.6 | 1 592 | 117 | 35.5–37.4 |
+
+The idle screen is unchanged with the pacer on: 0.01% CPU, 1.3 context
+switches/s and 0.4 interrupt wakeups/s. The timer stops a second after the
+last update.
+
 ## Decode throughput
 
 `rfb-bench live --record` captured 8 s of the `full` scene from each server, for each encoding. The

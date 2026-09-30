@@ -27,12 +27,13 @@ final class Session {
 
     func run() async throws {
         let configuration = client.configuration
-        let info = try await Handshake.negotiate(reader, transport: client.transport, password: configuration.password, shared: configuration.shared)
+        // the first request predates ServerInit, so it asks for the largest
+        // rectangle and the server clips it to the framebuffer.
+        let opening = Message.setPixelFormat().bytes + Message.setEncodings(configuration.advertised).bytes
+            + Message.updateRequest(incremental: false, RFBRect(x: 0, y: 0, width: 0xFFFF, height: 0xFFFF)).bytes
+        let info = try await Handshake.negotiate(reader, transport: client.transport, password: configuration.password, shared: configuration.shared, eager: configuration.eagerHandshake, opening: opening)
         let framebuffer = try RFBFramebuffer(width: info.width, height: info.height)
         self.framebuffer = framebuffer
-        client.send(.setPixelFormat())
-        client.send(.setEncodings(configuration.advertised))
-        client.send(.updateRequest(incremental: false, framebuffer.bounds))
         client.shared.withLock { s in
             s.ready = true
             s.width = info.width
@@ -91,18 +92,11 @@ final class Session {
             }
         }
         let wire = reader.consumed - startBytes + 4
-        let request = client.shared.withLock { s -> Message? in
+        client.shared.withLock { s in
             s.statistics.updates += 1
             s.statistics.bytes += wire
-            guard !s.continuous else { return nil }
-            if client.configuration.requestsOnConsume, !dirty.isEmpty {
-                s.owesRequest = true
-                return nil
-            }
-            defer { s.nextIncremental = true }
-            return .updateRequest(incremental: s.nextIncremental, RFBRect(x: 0, y: 0, width: s.width, height: s.height))
         }
-        if let request { client.send(request) }
+        client.answered(drawn: client.configuration.requestsOnConsume && !dirty.isEmpty)
         if let framebuffer, !dirty.isEmpty {
             events(.updated(framebuffer, dirty: dirty))
         }

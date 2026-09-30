@@ -1,6 +1,15 @@
 #!/bin/bash
 # SERVER=x11vnc|tigervnc  MODE=idle|region|full  FPS=30  GEOMETRY=1280x800  PASSWORD=
+# DELAY_MS=N adds N ms each way with netem (needs --cap-add NET_ADMIN).
 set -euo pipefail
+if [ -n "${DELAY_MS:-}" ]; then
+  ip link add ifb0 type ifb
+  ip link set ifb0 up
+  tc qdisc add dev eth0 root netem delay "${DELAY_MS}ms" limit 100000
+  tc qdisc add dev eth0 handle ffff: ingress
+  tc filter add dev eth0 parent ffff: protocol ip u32 match u32 0 0 action mirred egress redirect dev ifb0
+  tc qdisc add dev ifb0 root netem delay "${DELAY_MS}ms" limit 100000
+fi
 SERVER=${SERVER:-x11vnc}
 MODE=${MODE:-region}
 FPS=${FPS:-30}

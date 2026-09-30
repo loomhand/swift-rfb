@@ -15,27 +15,70 @@ enum Handshake {
 
     // negotiate runs version, security and init, and returns the server's
     // announcement; the reader is positioned at the first server message.
-    static func negotiate(_ reader: Reader, transport: any RFBTransport, password: String?, shared: Bool) async throws -> RFBServerInfo {
+    // The last security step, ClientInit and `opening` leave in one write
+    // without waiting for SecurityResult or ServerInit: the server reads
+    // them in order, so a session costs one round trip per server reply it
+    // cannot do without.
+    // Eager sends everything up front, before the banner, for a server known
+    // to speak 3.8 without authentication.
+    static func negotiate(_ reader: Reader, transport: any RFBTransport, password: String?, shared: Bool, eager: Bool, opening: [UInt8]) async throws -> RFBServerInfo {
+        if eager {
+            var write = Message()
+            write.append("RFB 003.008\n".utf8)
+            write.u8(securityNone)
+            write.u8(shared ? 1 : 0)
+            write.append(opening)
+            transport.send(write.data)
+        }
         try await reader.need(12)
         let banner = String(decoding: reader.bytes(12), as: UTF8.self)
         let minor = try minorVersion(banner)
+        if eager {
+            guard minor == 8 else { throw RFBError.unsupportedVersion(banner) }
+            try await eagerSecurity(reader)
+            return try await serverInit(reader, minor: minor, security: securityNone)
+        }
         transport.send(Data(String(format: "RFB 003.%03d\n", minor).utf8))
 
-        let security = try await chooseSecurity(reader, transport: transport, minor: minor, password: password)
+        var write = Message()
+        let security = try await chooseSecurity(reader, minor: minor, password: password)
+        if minor > 3 { write.u8(security) }
         if security == securityVNC {
             guard let password else { throw RFBError.passwordRequired }
-            try await reader.need(16)
-            let challenge = Array(reader.bytes(16))
-            transport.send(Data(try vncResponse(challenge: challenge, password: password)))
-        }
-        if security == securityVNC || minor >= 8 {
-            let result = try await reader.readU32()
-            if result != 0 {
-                throw RFBError.authenticationFailed(minor >= 8 ? try await reason(reader) : "security result \(result)")
+            if minor > 3 {
+                transport.send(write.data)
+                write = Message()
             }
+            try await reader.need(16)
+            write.append(try vncResponse(challenge: Array(reader.bytes(16)), password: password))
         }
+        write.u8(shared ? 1 : 0)
+        write.append(opening)
+        transport.send(write.data)
 
-        transport.send(Data([shared ? 1 : 0]))
+        if security == securityVNC || minor >= 8 {
+            try await securityResult(reader, minor: minor)
+        }
+        return try await serverInit(reader, minor: minor, security: security)
+    }
+
+    private static func eagerSecurity(_ reader: Reader) async throws {
+        let count = Int(try await reader.readU8())
+        if count == 0 { throw RFBError.serverRefused(try await reason(reader)) }
+        try await reader.need(count)
+        let offered = Array(reader.bytes(count))
+        guard offered.contains(securityNone) else { throw RFBError.unsupportedSecurity(offered) }
+        try await securityResult(reader, minor: 8)
+    }
+
+    private static func securityResult(_ reader: Reader, minor: Int) async throws {
+        let result = try await reader.readU32()
+        if result != 0 {
+            throw RFBError.authenticationFailed(minor >= 8 ? try await reason(reader) : "security result \(result)")
+        }
+    }
+
+    private static func serverInit(_ reader: Reader, minor: Int, security: UInt8) async throws -> RFBServerInfo {
         try await reader.need(24)
         let width = Int(reader.u16())
         let height = Int(reader.u16())
@@ -55,7 +98,7 @@ enum Handshake {
         return 3
     }
 
-    private static func chooseSecurity(_ reader: Reader, transport: any RFBTransport, minor: Int, password: String?) async throws -> UInt8 {
+    private static func chooseSecurity(_ reader: Reader, minor: Int, password: String?) async throws -> UInt8 {
         if minor == 3 {
             let type = try await reader.readU32()
             if type == 0 { throw RFBError.serverRefused(try await reason(reader)) }
@@ -78,7 +121,6 @@ enum Handshake {
         } else {
             throw RFBError.unsupportedSecurity(offered)
         }
-        transport.send(Data([choice]))
         return choice
     }
 

@@ -4,7 +4,7 @@ import RFBMetal
 import Synchronization
 
 // rfb-view HOST:PORT [--password PW] [--control] [--encodings tight,zrle,...]
-//         [--jpeg 0-9|off] [--no-continuous] [--seconds N] [--exit-after-first-frame]
+//         [--jpeg 0-9|off] [--no-continuous] [--eager] [--interval MS|0] [--seconds N] [--exit-after-first-frame]
 //         [--self-test]  (control mode: after the first frame, clicks framebuffer
 //                         point 123,456 and types "ab" through synthetic AppKit events)
 
@@ -38,6 +38,10 @@ final class Viewer: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case "--password": configuration.password = args.next()
             case "--control": control = true
             case "--no-continuous": configuration.continuousUpdates = false
+            case "--eager": configuration.eagerHandshake = true
+            case "--interval":
+                let ms = Int(args.next() ?? "") ?? 0
+                configuration.requestInterval = ms > 0 ? .milliseconds(ms) : nil
             case "--jpeg": configuration.jpegQuality = Int(args.next() ?? "off")
             case "--seconds": seconds = Double(args.next() ?? "")
             case "--exit-after-first-frame": exitAfterFirstFrame = true

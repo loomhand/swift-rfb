@@ -93,12 +93,31 @@ mapping for other front ends.
 
 ### Update pacing
 
-With `requestsOnConsume` (the default) the client asks for the next
-incremental update only after `framebufferConsumed()`, which `RFBView` calls
-when the GPU has finished reading the frame. An idle or hidden view therefore
-costs nothing on either side. When the server offers ContinuousUpdates (and
-`continuousUpdates` is on) the client enables them instead and answers the
-server's fences. Headless users set `requestsOnConsume = false`.
+When the server offers ContinuousUpdates (TigerVNC does, x11vnc does not)
+and `continuousUpdates` is on, the client enables them, answers the server's
+fences and sends no requests.
+
+Otherwise the client sends one incremental request per update. While updates
+keep arriving it also sends one every `requestInterval` (33 ms). The server
+then has a request waiting whenever the screen changes, so a high-latency
+path is not capped at one update per round trip. The timer stops a second
+after the last update, so an idle screen costs nothing.
+
+With `requestsOnConsume` (the default), requests pause while `maxUndrawn`
+(2) delivered updates are waiting for `framebufferConsumed()`. `RFBView` calls
+it once the GPU has read the frame, so a hidden view stops the server as
+well. Headless users set `requestsOnConsume = false`.
+
+### Handshake round trips
+
+The last security step and ClientInit go out in one write, together with
+SetPixelFormat, SetEncodings and the first update request (for the largest
+rectangle, which the server clips). This write goes out without waiting for
+SecurityResult or ServerInit, so the first update follows ServerInit in the
+same flight. `eagerHandshake` goes further and writes the whole client side
+before the server's banner: no client round trip at all. Use it only for a
+server known to speak RFB 3.8 with security None (x11vnc -nopw, TigerVNC
+SecurityTypes=None); other servers fail the session.
 
 ## Protocol support
 
@@ -111,12 +130,14 @@ server's fences. Headless users set `requestsOnConsume = false`.
   Tight JPEG quality and compression level, Extended Clipboard (UTF-8).
 - Clipboard: Latin-1 ServerCutText/ClientCutText, and UTF-8 through the
   extended clipboard notify/request/provide flow with servers that offer
-  notify (TigerVNC). libvncserver 0.9.14 (x11vnc) drops clients that send it
-  a provide, so those servers get Latin-1.
+  notify (TigerVNC). libvncserver 0.9.14 (x11vnc 0.9.16) closes the
+  connection when a client sends it an extended-clipboard provide ("zlib
+  inflation error", even for a standard zlib payload). Its caps lack notify,
+  so swift-rfb sends such servers Latin-1 ClientCutText instead.
 
 `Configuration` selects encodings, JPEG quality (`nil` keeps Tight lossless),
-compression level, password, shared flag, continuous updates, pacing and
-statistics collection.
+compression level, password, shared flag, eager handshake, continuous
+updates, request pacing and statistics collection.
 
 ## Building and testing
 

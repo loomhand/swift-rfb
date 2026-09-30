@@ -13,8 +13,13 @@ import Testing
 
     @Test func requestWaitsForConsumption() async throws {
         let server = Server()
-        let (client, events, task) = start(server)
+        var configuration = RFBClient.Configuration()
+        configuration.requestInterval = nil
+        let (client, events, task) = start(server, configuration)
         _ = await server.handshake(width: 16, height: 8)
+        await server.send(emptyUpdate())
+        _ = await events.update()
+        #expect(await server.read(10) == [3, 1, 0, 0, 0, 0, 0, 16, 0, 8])
         await server.send(emptyUpdate())
         _ = await events.update()
         client.pointer(x: 3, y: 4, buttons: .left)
@@ -27,10 +32,37 @@ import Testing
         task.cancel()
     }
 
+    @Test func pacerRequestsWhileUpdatesFlowThenStops() async throws {
+        let server = Server()
+        var configuration = RFBClient.Configuration()
+        configuration.requestsOnConsume = false
+        configuration.requestInterval = .milliseconds(20)
+        let (client, events, task) = start(server, configuration)
+        _ = await server.handshake(width: 16, height: 8)
+        await server.send(emptyUpdate())
+        _ = await events.update()
+        for _ in 0..<4 {
+            #expect(await server.read(10) == [3, 1, 0, 0, 0, 0, 0, 16, 0, 8])
+        }
+        try await Task.sleep(for: .milliseconds(1300))
+        client.key(1, down: true)
+        try await Task.sleep(for: .milliseconds(100))
+        client.key(2, down: true)
+        var types: [UInt8] = []
+        while types.filter({ $0 == 4 }).count < 2 {
+            let type = await server.read(1)[0]
+            _ = await server.read(type == 3 ? 9 : 7)
+            types.append(type)
+        }
+        #expect(types.suffix(2) == [4, 4])
+        task.cancel()
+    }
+
     @Test func immediateRequests() async throws {
         let server = Server()
         var configuration = RFBClient.Configuration()
         configuration.requestsOnConsume = false
+        configuration.requestInterval = nil
         let (_, events, task) = start(server, configuration)
         _ = await server.handshake(width: 16, height: 8)
         await server.send(emptyUpdate())
@@ -62,7 +94,9 @@ import Testing
 
     @Test func qemuKeyEventOnceOffered() async throws {
         let server = Server()
-        let (client, events, task) = start(server)
+        var configuration = RFBClient.Configuration()
+        configuration.requestInterval = nil
+        let (client, events, task) = start(server, configuration)
         _ = await server.handshake(width: 16, height: 8)
         var b = Bytes()
         b.u8(0); b.u8(0); b.u16(2)
@@ -70,6 +104,7 @@ import Testing
         b.rect(0, 0, 1, 1, .raw); b.pixel(0)
         await server.send(b.data)
         _ = await events.update()
+        _ = await server.read(10)
         client.key(0x61, down: true, scancode: 0x1E)
         #expect(await server.read(12) == [255, 0, 0, 1, 0, 0, 0, 0x61, 0, 0, 0, 0x1E])
         task.cancel()

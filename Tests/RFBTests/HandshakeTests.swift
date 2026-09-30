@@ -27,10 +27,44 @@ import Testing
         let (encodings, request) = await server.handshake(width: 64, height: 32, name: "desk")
         #expect(encodings.contains(RFBEncoding.tight.rawValue))
         #expect(encodings.contains(RFBEncoding.extendedClipboard.rawValue))
-        #expect(request == [3, 0, 0, 0, 0, 0, 0, 64, 0, 32])
+        #expect(request == [3, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF])
         let info = await events.next { if case .connected(let i) = $0 { i } else { nil } }
         #expect(info == RFBServerInfo(version: "3.8", security: 1, name: "desk", width: 64, height: 32))
         task.cancel()
+    }
+
+    @Test func openingDoesNotWaitForSecurityResult() async throws {
+        let server = Server()
+        let (_, _, task) = start(server)
+        await server.send(Array("RFB 003.008\n".utf8) + [1, 1])
+        _ = await server.read(12)
+        #expect(await server.read(2) == [1, 1])
+        #expect(await server.read(20).first == 0)
+        let header = await server.read(4)
+        _ = await server.read((Int(header[2]) << 8 | Int(header[3])) * 4)
+        #expect(await server.read(10) == [3, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF])
+        task.cancel()
+    }
+
+    @Test func eagerHandshakeWritesOnceBeforeTheBanner() async throws {
+        let server = Server()
+        var configuration = RFBClient.Configuration()
+        configuration.eagerHandshake = true
+        let (_, events, task) = start(server, configuration)
+        #expect(await server.read(14) == Array("RFB 003.008\n".utf8) + [1, 1])
+        #expect(await server.read(20).first == 0)
+        await server.send(Array("RFB 003.008\n".utf8) + [2, 2, 1, 0, 0, 0, 0] + Bytes.serverInit(width: 8, height: 4, name: "e"))
+        #expect(await events.next { (e: RFBEvent) -> Int? in if case .connected(let i) = e { i.width } else { nil } } == 8)
+        task.cancel()
+    }
+
+    @Test func eagerHandshakeRejectsOlderServers() async throws {
+        let server = Server()
+        var configuration = RFBClient.Configuration()
+        configuration.eagerHandshake = true
+        let (_, _, task) = start(server, configuration)
+        await server.send(Array("RFB 003.003\n".utf8))
+        await #expect(throws: RFBError.unsupportedVersion("RFB 003.003\n")) { try await task.value }
     }
 
     @Test func rfb38VNCAuthentication() async throws {

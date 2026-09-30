@@ -6,7 +6,7 @@ import Synchronization
 // rfb-bench replay    FILE [--iterations N]
 // rfb-bench input     HOST:PORT --move X,Y [--click] [--type TEXT] [--keys 0x00,0x24 (macOS key codes)]
 // rfb-bench clipboard HOST:PORT [--set TEXT] [--seconds N]
-// options: --encodings tight,zrle,hextile,raw  --jpeg 0-9|off  --no-continuous  --password PW
+// options: --encodings tight,zrle,hextile,raw  --jpeg 0-9|off  --no-continuous  --eager  --interval MS|0  --password PW
 
 struct Options {
     var configuration = RFBClient.Configuration()
@@ -36,6 +36,10 @@ struct Options {
                 if xy.count == 2 { move = (xy[0], xy[1]) }
             case "--password": configuration.password = args.next()
             case "--no-continuous": configuration.continuousUpdates = false
+            case "--eager": configuration.eagerHandshake = true
+            case "--interval":
+                let ms = Int(args.next() ?? "") ?? 0
+                configuration.requestInterval = ms > 0 ? .milliseconds(ms) : nil
             case "--jpeg":
                 let value = args.next() ?? "off"
                 configuration.jpegQuality = Int(value)
@@ -111,6 +115,10 @@ final class ReplayTransport: RFBTransport {
     func close() {}
 }
 
+func milliseconds(_ d: Duration) -> String {
+    String(format: "%.1f", Double(d.components.seconds) * 1e3 + Double(d.components.attoseconds) / 1e15)
+}
+
 func report(_ stats: RFBStatistics, seconds: Double, label: String) {
     print("== \(label): \(stats.updates) updates in \(String(format: "%.2f", seconds)) s = \(String(format: "%.1f", Double(stats.updates) / seconds)) updates/s, wire \(String(format: "%.2f", Double(stats.bytes) / 1e6)) MB, continuous=\(stats.continuousUpdates) fences=\(stats.fences) extclipboard=\(stats.extendedClipboard)")
     for (encoding, e) in stats.encodings.sorted(by: { $0.value.pixels > $1.value.pixels }) {
@@ -137,10 +145,18 @@ func live(_ options: Options) async throws {
     let started = ContinuousClock.now
     try await tcp.connect()
     let firstUpdate = Mutex<Duration?>(nil)
+    let connected = Mutex<Duration?>(nil)
+    let firstBytes = Mutex<Int?>(nil)
     let session = Task {
         try await client.run { event in
-            if case .updated = event {
+            switch event {
+            case .connected:
+                connected.withLock { $0 = ContinuousClock.now - started }
+            case .updated:
                 firstUpdate.withLock { if $0 == nil { $0 = ContinuousClock.now - started } }
+                firstBytes.withLock { if $0 == nil { $0 = client.statistics.bytes } }
+            default:
+                break
             }
         }
     }
@@ -150,8 +166,8 @@ func live(_ options: Options) async throws {
         print("error: \(error)")
     }
     let elapsed = ContinuousClock.now - started
-    if let first = firstUpdate.withLock({ $0 }) {
-        print("first_update_ms=\(String(format: "%.1f", Double(first.components.attoseconds) / 1e15 + Double(first.components.seconds) * 1e3))")
+    if let first = firstUpdate.withLock({ $0 }), let serverInit = connected.withLock({ $0 }) {
+        print("server_init_ms=\(milliseconds(serverInit)) first_update_ms=\(milliseconds(first)) first_update_bytes=\(firstBytes.withLock { $0 } ?? 0)")
     }
     report(client.statistics, seconds: Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18, label: "live \(target)")
     if let path = options.record {

@@ -1,13 +1,15 @@
 #!/bin/bash
-# Starts the test servers: servers.sh [MODE] [FPS]  (MODE=idle|region|full)
+# Starts the test servers: servers.sh [MODE] [FPS] [DELAY_MS]  (MODE=idle|region|full;
+# DELAY_MS adds netem latency each way)
 # x11vnc on :5901, TigerVNC Xvnc on :5902; a password-protected x11vnc on :5903.
 set -euo pipefail
 MODE=${1:-region}
 FPS=${2:-30}
+DELAY_MS=${3:-}
 IMAGE=swift-rfb-scene  # docker build -t swift-rfb-scene docker
 start() {
   docker rm -f "$1" >/dev/null 2>&1 || true
-  docker run -d --name "$1" -p "$2:5900" -e SERVER="$3" -e MODE="$MODE" -e FPS="$FPS" -e PASSWORD="${4:-}" "$IMAGE" >/dev/null
+  docker run -d --name "$1" --cap-add NET_ADMIN -p "$2:5900" -e SERVER="$3" -e MODE="$MODE" -e FPS="$FPS" -e DELAY_MS="$DELAY_MS" -e PASSWORD="${4:-}" "$IMAGE" >/dev/null
 }
 start rfb-x11 5901 x11vnc
 start rfb-tiger 5902 tigervnc
