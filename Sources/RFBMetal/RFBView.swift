@@ -171,15 +171,17 @@ public final class RFBView: NSView {
         guard let surface, !metalLayer.isHidden else { return }
         let overlay = !isInputEnabled ? cursor.flatMap { c in pointer.map { (c, $0.x, $0.y) } } : nil
         let client = client
+        let first = !presentedFirst && hasContent.load(ordering: .relaxed)
         var presented: (@Sendable () -> Void)?
-        if !presentedFirst, hasContent.load(ordering: .relaxed) {
-            presentedFirst = true
+        if first {
             presented = { [weak self] in
                 Task { @MainActor in self?.onFirstFrame?() }
             }
         }
-        if !renderer.draw(surface, cursor: overlay, in: metalLayer, presented: presented, completed: { client?.framebufferConsumed() }) {
-            dirty.store(true, ordering: .releasing)
+        if renderer.draw(surface, cursor: overlay, in: metalLayer, presented: presented, completed: { client?.framebufferConsumed() }) {
+            presentedFirst = presentedFirst || first
+        } else {
+            requestDraw()
         }
     }
 

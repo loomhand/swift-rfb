@@ -5,6 +5,7 @@ import Foundation
 
 struct Sample {
     var cpu: UInt64
+    var system: UInt64
     var csw: Int32
     var idle: UInt64
     var interrupt: UInt64
@@ -23,7 +24,8 @@ func sample(_ pid: pid_t) -> Sample? {
     var timebase = mach_timebase_info_data_t()
     mach_timebase_info(&timebase)
     let cpu = (task.pti_total_user + task.pti_total_system) * UInt64(timebase.numer) / UInt64(timebase.denom)
-    return Sample(cpu: cpu, csw: task.pti_csw, idle: usage.ri_pkg_idle_wkups, interrupt: usage.ri_interrupt_wkups,
+    let system = task.pti_total_system * UInt64(timebase.numer) / UInt64(timebase.denom)
+    return Sample(cpu: cpu, system: system, csw: task.pti_csw, idle: usage.ri_pkg_idle_wkups, interrupt: usage.ri_interrupt_wkups,
                   footprint: usage.ri_phys_footprint, at: Date().timeIntervalSince1970)
 }
 
@@ -35,6 +37,6 @@ guard args.count >= 3, let pid = pid_t(args[1]), let seconds = Double(args[2]), 
 Thread.sleep(forTimeInterval: seconds)
 guard let b = sample(pid) else { exit(1) }
 let dt = b.at - a.at
-print(String(format: "cpu=%.2f%% csw/s=%.1f idle_wakeups/s=%.1f interrupt_wakeups/s=%.1f footprint_mb=%.1f interval_s=%.1f",
-             Double(b.cpu - a.cpu) / 1e9 / dt * 100, Double(b.csw - a.csw) / dt, Double(b.idle - a.idle) / dt,
+print(String(format: "cpu=%.2f%% (sys %.2f%%) csw/s=%.1f idle_wakeups/s=%.1f interrupt_wakeups/s=%.1f footprint_mb=%.1f interval_s=%.1f",
+             Double(b.cpu - a.cpu) / 1e9 / dt * 100, Double(b.system - a.system) / 1e9 / dt * 100, Double(b.csw - a.csw) / dt, Double(b.idle - a.idle) / dt,
              Double(b.interrupt - a.interrupt) / dt, Double(b.footprint) / 1048576, dt))

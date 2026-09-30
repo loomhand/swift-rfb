@@ -35,6 +35,7 @@ public struct RFBStatistics: Sendable, Equatable {
     public var bytes = 0
     public var fences = 0
     public var continuousUpdates = false
+    public var extendedClipboard = false
     public var encodings: [RFBEncoding: Encoding] = [:]
 }
 
@@ -95,7 +96,9 @@ public final class RFBClient: Sendable {
                 transport.close()
             }
             let session = try Session(client: self, events: events)
-            try await session.run()
+            try await withTaskExecutorPreference(transport.executor) {
+                try await session.run()
+            }
         } onCancel: {
             transport.close()
         }
@@ -163,9 +166,10 @@ public final class RFBClient: Sendable {
         let message = shared.withLock { s -> Message? in
             s.localClipboard = text
             guard s.ready else { return nil }
-            guard let caps = s.clipboardCaps else { return .cutText(latin1: text) }
-            if caps & Clipboard.notify != 0 { return .extendedCutText(flags: Clipboard.notify | Clipboard.text, payload: []) }
-            return ExtendedClipboard.provide(text)
+            // libvncserver 0.9.14 offers no notify and drops the client on an
+            // unsolicited provide, so only notify-capable servers get UTF-8.
+            guard let caps = s.clipboardCaps, caps & Clipboard.notify != 0 else { return .cutText(latin1: text) }
+            return .extendedCutText(flags: Clipboard.notify | Clipboard.text, payload: [])
         }
         if let message { transport.send(message.data) }
     }

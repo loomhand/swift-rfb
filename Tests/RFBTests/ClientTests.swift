@@ -122,6 +122,19 @@ import Testing
         task.cancel()
     }
 
+    @Test func libvncserverCapsKeepLegacyCutText() async throws {
+        let server = Server()
+        let (client, _, task) = start(server)
+        _ = await server.handshake(width: 16, height: 8)
+        var caps = Bytes()
+        caps.u8(3); caps.append([0, 0, 0]); caps.s32(-8); caps.append([0x17, 0, 0, 1, 0, 0x10, 0, 0])
+        await server.send(caps.data)
+        _ = await server.read(16)
+        client.setClipboard("ok")
+        #expect(await server.read(10) == [6, 0, 0, 0, 0, 0, 0, 2, 0x6F, 0x6B])
+        task.cancel()
+    }
+
     @Test func pipeAppliesBackpressure() async throws {
         let pipe = RFBPipe(bufferLimit: 8)
         let delivered = Atomic(0)

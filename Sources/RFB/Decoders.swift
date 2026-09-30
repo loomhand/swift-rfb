@@ -100,6 +100,7 @@ final class ZRLEDecoder: RectDecoder {
         let length = Int(try await reader.readU32())
         try await reader.need(length)
         let produced = try inflater.inflate(reader.bytes(length), into: &scratch)
+        scratch.reserve(produced + 4, keeping: produced)
         try tiles(UnsafeRawBufferPointer(start: scratch.base, count: produced), rect, framebuffer)
     }
 
@@ -136,13 +137,15 @@ final class ZRLEDecoder: RectDecoder {
                 switch sub {
                 case 0:
                     try need(tw * th * 3)
+                    var p = UnsafeRawPointer(src + at)
                     for y in 0..<th {
                         let row = framebuffer.row(y0 + y, x: x0)
                         for x in 0..<tw {
-                            row[x] = cpixel(src + at)
-                            at += 3
+                            row[x] = UInt32(littleEndian: p.loadUnaligned(as: UInt32.self)) & 0x00FF_FFFF
+                            p += 3
                         }
                     }
+                    at += tw * th * 3
                 case 1:
                     try need(3)
                     framebuffer.fill(RFBRect(x: x0, y: y0, width: tw, height: th), cpixel(src + at))
@@ -275,15 +278,24 @@ final class TightDecoder: RectDecoder {
             let length = try await compactLength(reader)
             try await reader.need(length)
             _ = try streams[Int(kind & 3)].inflate(reader.bytes(length), into: &scratch, exact: size)
+            scratch.reserve(size + 4, keeping: size)
             data = UnsafePointer(scratch.base.assumingMemoryBound(to: UInt8.self))
         }
         switch filter {
-        case 0:
+        case 0 where size < 12:
             for y in 0..<rect.height {
                 let row = framebuffer.row(rect.y + y, x: rect.x)
-                let src = data + y * rect.width * 3
                 for x in 0..<rect.width {
-                    row[x] = Self.tpixel(src + x * 3)
+                    row[x] = Self.tpixel(data + (y * rect.width + x) * 3)
+                }
+            }
+        case 0:
+            var p = UnsafeRawPointer(data)
+            for y in 0..<rect.height {
+                let row = framebuffer.row(rect.y + y, x: rect.x)
+                for x in 0..<rect.width {
+                    row[x] = UInt32(littleEndian: p.loadUnaligned(as: UInt32.self)).byteSwapped >> 8
+                    p += 3
                 }
             }
         case 1 where colours == 2:

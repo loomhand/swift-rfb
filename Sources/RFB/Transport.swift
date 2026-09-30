@@ -27,23 +27,47 @@ public enum RFBError: Error, Equatable, CustomStringConvertible {
 }
 
 // RFBTransport is the byte stream under one RFB session. receive is called
-// by one reader at a time and returns nil at end of stream; send never
-// blocks and keeps call order; close fails a pending receive.
+// by one reader at a time, may wait for up to `expecting` bytes and returns
+// nil at end of stream; send never blocks and keeps call order; close fails
+// a pending receive.
 public protocol RFBTransport: Sendable {
-    func receive() async throws -> Data?
+    func receive(expecting count: Int) async throws -> Data?
     func send(_ data: Data)
     func close()
+    // executor, when set, runs the session where receive completes, saving
+    // a thread hop per read.
+    var executor: (any TaskExecutor)? { get }
+}
+
+extension RFBTransport {
+    public var executor: (any TaskExecutor)? { nil }
+}
+
+final class QueueExecutor: TaskExecutor {
+    let queue: DispatchQueue
+
+    init(_ queue: DispatchQueue) {
+        self.queue = queue
+    }
+
+    func enqueue(_ job: consuming ExecutorJob) {
+        let job = UnownedJob(job)
+        let executor = asUnownedTaskExecutor()
+        queue.async { job.runSynchronously(on: executor) }
+    }
 }
 
 public final class RFBTCPTransport: RFBTransport {
     private let connection: NWConnection
     private let queue = DispatchQueue(label: "rfb.tcp", qos: .userInteractive)
+    public let executor: (any TaskExecutor)?
     private let waiter = Mutex<CheckedContinuation<Void, any Error>?>(nil)
 
     public init(host: String, port: UInt16) {
         let tcp = NWProtocolTCP.Options()
         tcp.noDelay = true
         connection = NWConnection(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port) ?? 5900, using: NWParameters(tls: nil, tcp: tcp))
+        executor = QueueExecutor(queue)
     }
 
     // connect resolves once the connection is established.
@@ -71,9 +95,9 @@ public final class RFBTCPTransport: RFBTransport {
         }
     }
 
-    public func receive() async throws -> Data? {
+    public func receive(expecting count: Int) async throws -> Data? {
         try await withCheckedThrowingContinuation { continuation in
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { data, _, isComplete, error in
+            connection.receive(minimumIncompleteLength: min(max(count, 1), 1 << 20), maximumLength: max(count, 1 << 20)) { data, _, isComplete, error in
                 if let data, !data.isEmpty {
                     continuation.resume(returning: data)
                 } else if let error {
@@ -148,7 +172,7 @@ public final class RFBPipe: RFBTransport {
         end(error.map { .failed($0) } ?? .endOfStream)
     }
 
-    public func receive() async throws -> Data? {
+    public func receive(expecting count: Int = 1) async throws -> Data? {
         try await withCheckedThrowingContinuation { continuation in
             let (outcome, writers) = state.withLock { s -> (Result<Data?, any Error>?, [CheckedContinuation<Void, Never>]) in
                 if s.head < s.chunks.count {

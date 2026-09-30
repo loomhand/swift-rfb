@@ -26,7 +26,7 @@ final class Reader {
     func need(_ count: Int) async throws {
         guard count <= 256 << 20 else { throw RFBError.protocolViolation("\(count) byte message") }
         while end - start < count {
-            guard let chunk = try await transport.receive() else { throw RFBError.connectionClosed }
+            guard let chunk = try await transport.receive(expecting: count - (end - start)) else { throw RFBError.connectionClosed }
             append(chunk, reserving: count)
         }
     }

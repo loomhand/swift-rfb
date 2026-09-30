@@ -2,8 +2,10 @@ import Foundation
 import RFB
 import Synchronization
 
-// rfb-bench live   HOST:PORT [--seconds N] [options] [--record FILE]
-// rfb-bench replay FILE [--iterations N]
+// rfb-bench live      HOST:PORT [--seconds N] [options] [--record FILE]
+// rfb-bench replay    FILE [--iterations N]
+// rfb-bench input     HOST:PORT --move X,Y [--click] [--type TEXT]
+// rfb-bench clipboard HOST:PORT [--set TEXT] [--seconds N]
 // options: --encodings tight,zrle,hextile,raw  --jpeg 0-9|off  --no-continuous  --password PW
 
 struct Options {
@@ -11,6 +13,9 @@ struct Options {
     var seconds = 10.0
     var iterations = 5
     var record: String?
+    var move: (x: Int, y: Int)?
+    var click = false
+    var text: String?
     var positional: [String] = []
 
     init(_ arguments: ArraySlice<String>) {
@@ -22,6 +27,11 @@ struct Options {
             case "--seconds": seconds = Double(args.next() ?? "") ?? seconds
             case "--iterations": iterations = Int(args.next() ?? "") ?? iterations
             case "--record": record = args.next()
+            case "--click": click = true
+            case "--type", "--set": text = args.next()
+            case "--move":
+                let xy = (args.next() ?? "").split(separator: ",").compactMap { Int($0) }
+                if xy.count == 2 { move = (xy[0], xy[1]) }
             case "--password": configuration.password = args.next()
             case "--no-continuous": configuration.continuousUpdates = false
             case "--jpeg":
@@ -56,15 +66,19 @@ struct Options {
 
 final class RecordingTransport: RFBTransport {
     let inner: RFBTCPTransport
+    let records: Bool
     let captured = Mutex(Data())
 
-    init(_ inner: RFBTCPTransport) {
+    init(_ inner: RFBTCPTransport, records: Bool) {
         self.inner = inner
+        self.records = records
     }
 
-    func receive() async throws -> Data? {
-        let data = try await inner.receive()
-        if let data { captured.withLock { $0.append(data) } }
+    var executor: (any TaskExecutor)? { inner.executor }
+
+    func receive(expecting count: Int) async throws -> Data? {
+        let data = try await inner.receive(expecting: count)
+        if records, let data { captured.withLock { $0.append(data) } }
         return data
     }
 
@@ -81,7 +95,7 @@ final class ReplayTransport: RFBTransport {
         self.data = data
     }
 
-    func receive() async throws -> Data? {
+    func receive(expecting count: Int) async throws -> Data? {
         let range = offset.withLock { o -> Range<Int>? in
             guard o < data.count else { return nil }
             defer { o = min(o + chunk, data.count) }
@@ -96,7 +110,7 @@ final class ReplayTransport: RFBTransport {
 }
 
 func report(_ stats: RFBStatistics, seconds: Double, label: String) {
-    print("== \(label): \(stats.updates) updates in \(String(format: "%.2f", seconds)) s = \(String(format: "%.1f", Double(stats.updates) / seconds)) updates/s, wire \(String(format: "%.2f", Double(stats.bytes) / 1e6)) MB, continuous=\(stats.continuousUpdates) fences=\(stats.fences)")
+    print("== \(label): \(stats.updates) updates in \(String(format: "%.2f", seconds)) s = \(String(format: "%.1f", Double(stats.updates) / seconds)) updates/s, wire \(String(format: "%.2f", Double(stats.bytes) / 1e6)) MB, continuous=\(stats.continuousUpdates) fences=\(stats.fences) extclipboard=\(stats.extendedClipboard)")
     for (encoding, e) in stats.encodings.sorted(by: { $0.value.pixels > $1.value.pixels }) {
         let decodeSeconds = Double(e.nanoseconds) / 1e9
         if e.pixels == 0 {
@@ -116,7 +130,7 @@ func live(_ options: Options) async throws {
         throw RFBError.transport("usage: rfb-bench live HOST:PORT")
     }
     let tcp = RFBTCPTransport(host: String(target[..<colon]), port: port)
-    let recorder = RecordingTransport(tcp)
+    let recorder = RecordingTransport(tcp, records: options.record != nil)
     let client = RFBClient(transport: recorder, configuration: options.configuration)
     let started = ContinuousClock.now
     try await tcp.connect()
@@ -130,7 +144,9 @@ func live(_ options: Options) async throws {
     }
     try? await Task.sleep(for: .seconds(options.seconds))
     session.cancel()
-    _ = await session.result
+    if case .failure(let error) = await session.result, !(error is CancellationError), error as? RFBError != .connectionClosed {
+        print("error: \(error)")
+    }
     let elapsed = ContinuousClock.now - started
     if let first = firstUpdate.withLock({ $0 }) {
         print("first_update_ms=\(String(format: "%.1f", Double(first.components.attoseconds) / 1e15 + Double(first.components.seconds) * 1e3))")
@@ -174,6 +190,67 @@ func replay(_ options: Options) async throws {
     }
 }
 
+func target(_ options: Options) throws -> RFBTCPTransport {
+    guard let target = options.positional.first, let colon = target.lastIndex(of: ":"), let port = UInt16(target[target.index(after: colon)...]) else {
+        throw RFBError.transport("missing HOST:PORT")
+    }
+    return RFBTCPTransport(host: String(target[..<colon]), port: port)
+}
+
+// interact connects, waits for the first update, runs act, then keeps the
+// session for the remaining seconds while printing clipboard events.
+func interact(_ options: Options, act: @escaping @Sendable (RFBClient) -> Void) async throws {
+    let tcp = try target(options)
+    let client = RFBClient(transport: tcp, configuration: options.configuration)
+    try await tcp.connect()
+    let acted = Mutex(false)
+    let session = Task {
+        try await client.run { event in
+            switch event {
+            case .updated:
+                guard acted.withLock({ a in defer { a = true }; return !a }) else { return }
+                act(client)
+            case .clipboard(let text):
+                print("clipboard: \(text.debugDescription)")
+            default:
+                break
+            }
+        }
+    }
+    try? await Task.sleep(for: .seconds(options.seconds))
+    session.cancel()
+    if case .failure(let error) = await session.result, !(error is CancellationError), error as? RFBError != .connectionClosed {
+        print("error: \(error)")
+    }
+}
+
+func input(_ options: Options) async throws {
+    let move = options.move
+    let click = options.click
+    let text = options.text
+    try await interact(options) { client in
+        if let move {
+            client.pointer(x: move.x, y: move.y, buttons: [])
+            if click {
+                client.pointer(x: move.x, y: move.y, buttons: .left)
+                client.pointer(x: move.x, y: move.y, buttons: [])
+            }
+        }
+        if let text { client.type(text) }
+        print("sent input")
+    }
+}
+
+func clipboard(_ options: Options) async throws {
+    let text = options.text
+    try await interact(options) { client in
+        if let text {
+            client.setClipboard(text)
+            print("set clipboard \(text.debugDescription)")
+        }
+    }
+}
+
 let arguments = CommandLine.arguments.dropFirst()
 let command = arguments.first ?? ""
 let options = Options(arguments.dropFirst())
@@ -181,6 +258,8 @@ do {
     switch command {
     case "live": try await live(options)
     case "replay": try await replay(options)
+    case "input": try await input(options)
+    case "clipboard": try await clipboard(options)
     default:
         print("usage: rfb-bench live HOST:PORT [--seconds N] [--encodings list] [--jpeg Q|off] [--no-continuous] [--record FILE]\n       rfb-bench replay FILE [--iterations N]")
         exit(2)

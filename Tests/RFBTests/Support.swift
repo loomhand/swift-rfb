@@ -207,7 +207,7 @@ final class Replay: RFBTransport {
         self.data = data
     }
 
-    func receive() async throws -> Data? {
+    func receive(expecting count: Int) async throws -> Data? {
         offset.withLock { o -> Data? in
             guard o < data.count else { return nil }
             let end = min(o + 4096, data.count)

@@ -39,5 +39,5 @@ if [ "$SERVER" = tigervnc ]; then
 else
   auth=(-nopw)
   [ -n "${PASSWORD:-}" ] && auth=(-passwd "$PASSWORD")
-  exec x11vnc -display :0 -rfbport 5900 -forever -shared -quiet -noipv6 "${auth[@]}"
+  exec x11vnc -display :0 -rfbport 5900 -forever -shared -noipv6 ${X11VNC_ARGS:--quiet} "${auth[@]}"
 fi

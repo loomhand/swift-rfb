@@ -95,7 +95,7 @@ final class Session {
             s.statistics.updates += 1
             s.statistics.bytes += wire
             guard !s.continuous else { return nil }
-            if client.configuration.requestsOnConsume {
+            if client.configuration.requestsOnConsume, !dirty.isEmpty {
                 s.owesRequest = true
                 return nil
             }
@@ -190,7 +190,10 @@ final class Session {
         let local = client.shared.withLock { $0.localClipboard }
         let outcome = try clipboard.receive(flags: flags, payload: payload, local: local)
         if let caps = outcome.serverCaps {
-            client.shared.withLock { $0.clipboardCaps = caps }
+            client.shared.withLock { s in
+                s.clipboardCaps = caps
+                s.statistics.extendedClipboard = true
+            }
         }
         outcome.replies.forEach(client.send)
         if let text = outcome.text { events(.clipboard(text)) }
