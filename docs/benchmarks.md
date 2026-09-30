@@ -15,7 +15,7 @@ Both servers draw the same scene: a plasma image with a text column. Three modes
 | `region` | a 320x240 ffplay `testsrc2` window at 30 fps |
 | `full` | a 1280x800 `testsrc2` at 30 fps, so the whole screen changes every frame |
 
-The baseline is RoyalVNCKit 1.1.0. This is the revision cocoonbox pins. It runs in its own
+The baseline is RoyalVNCKit 1.1.0, pinned by revision. It runs in its own
 `VNCCAFramebufferView`, through `Benchmarks/RoyalVNCView` (`royalvnc-view`), and asks for its default
 encodings: tight, zrle, zlib and hextile. `rfb-view` runs with the default `RFBClient.Configuration`:
 tight, zrle, hextile, copyrect and raw, JPEG quality 8, and continuous updates when the server offers
@@ -127,22 +127,23 @@ column is the same binary built at de93977.
 ServerInit lands on whole RTTs. On x11vnc it arrives 100–290 ms later, because
 x11vnc is slow to send its banner. After ServerInit, the rest of the
 first-update time is TCP slow start on a cold connection: the first update is
-93–126 KB, which takes 3 more RTTs at the initial congestion window. The app
-carries RFB inside an already-warm gRPC/HTTP-2 connection, which removes both
-the TCP connect and slow start. There, the coalesced handshake costs 2 client
+93–126 KB, which takes 3 more RTTs at the initial congestion window. An app
+that carries RFB inside an already-warm connection (an `RFBPipe` over a
+gRPC/HTTP-2 stream, say) avoids both the TCP connect and slow start. There, the coalesced handshake costs 2 client
 round trips after the banner and the eager one costs none.
 
 ### Updates per second on a changing screen
 
 `scripts/wan-pacing.sh` runs `rfb-bench live --eager` for 15 s against each
-server. The "UpdatePump" rows put cocoonbox's `UpdatePump`, copied verbatim
-from feat/macos@0ef99a3 into `Benchmarks/PumpProxy`, between swift-rfb (with
-its own pacer off) and x11vnc, as the app's ScreenBridge does today.
+server. The "request pump" rows put a client-side request pump
+(`Benchmarks/PumpProxy`, the kind an embedding app runs in front of a client
+that asks for one update per round trip) between swift-rfb, with its own
+pacer off, and x11vnc.
 
 | server | request strategy | `region` updates/s | `full` updates/s | `full` wire MB/s |
 |---|---|---|---|---|
 | x11vnc | one request per update | 2.3 | 2.6 | 0.21 |
-| x11vnc | cocoonbox UpdatePump (33 ms) | 25.5 | 27.6 | 2.15 |
+| x11vnc | client-side request pump (33 ms) | 25.5 | 27.6 | 2.15 |
 | x11vnc | **swift-rfb pacer (33 ms)** | **26.5** | **28.1** | 2.25 |
 | TigerVNC | **ContinuousUpdates + Fence** (default) | **45.4** | **43.3** | 2.49 |
 | TigerVNC | no CU, one request per update | 3.7 | 3.7 | 0.39 |
@@ -157,13 +158,12 @@ its own pacer off) and x11vnc, as the app's ScreenBridge does today.
   (depth 1–6, tried first) stalls at 6.7 updates/s. A request every 33 ms while
   updates flow matches the pump.
 - The pacer matches the pump on x11vnc: 26.5 vs 25.5 and 28.1 vs 27.6
-  updates/s. It is built into the client and costs nothing when idle, so the
-  app's pump can go.
-- The original pump did not work at all with swift-rfb. Its `RFBClientTap`
-  parses an extended ClientCutText's negative length as about 4 GB and holds
-  every later client message. swift-rfb's clipboard caps reply is such a
-  message, and the copy used here patches that one line. If the pump lived on,
-  it would need that fix.
+  updates/s. It is built into the client and costs nothing when idle, so an
+  embedding app needs no pump of its own.
+- A pump that parses client messages must read an extended ClientCutText's
+  negative length as the payload size. Read as unsigned, it is about 4 GB, and
+  the pump then holds every later client message; swift-rfb's clipboard caps
+  reply is such a message.
 
 ### Cost on a local path
 
@@ -178,16 +178,16 @@ The idle screen is unchanged with the pacer on: 0.01% CPU, 1.3 context
 switches/s and 0.4 interrupt wakeups/s. The timer stops a second after the
 last update.
 
-## In the cocoonbox app
+## In an embedding app
 
-This compares cocoonbox feat/swift-rfb against the same commit (0a525ca)
-built with RoyalVNCKit behind a loopback bridge and UpdatePump. Both are
-release bundles from `scripts/bundle.sh`. The autopilot waits for the live
-screen, then the process is sampled with `procstat` for 19 s. Each row is two
-runs, given as a range. Against the real box the runs were read-only: view only,
-no ensure, no Hibernate and no agent turns.
+A desktop app that streams RFB over gRPC was measured two ways: with
+swift-rfb fed through an `RFBPipe`, and with the same app commit built on
+RoyalVNCKit behind a loopback TCP bridge and a client-side request pump. Both
+are release bundles. The app's automation waits for the live screen, then the
+process is sampled with `procstat` for 19 s. Each row is two runs, given as a
+range. The remote runs were view only.
 
-**MockBox** (synthetic 1280x800 desktop, Raw only, local gRPC):
+**Local mock server** (synthetic 1280x800 desktop, Raw only, local gRPC):
 
 | scene | app | CPU % | context switches/s | interrupt wakeups/s | footprint MB | updates/s |
 |---|---|---|---|---|---|---|
@@ -199,7 +199,7 @@ no ensure, no Hibernate and no agent turns.
 First update after connect: 27–42 ms against 41–50 ms. The frame then reaches
 the display 5–11 ms later with swift-rfb, against about 25 ms with RoyalVNCKit.
 
-**Real box** (bench-1, x11vnc, 1280x800, about 230 ms RTT):
+**Remote host** (x11vnc, 1280x800, about 230 ms RTT):
 
 | | swift-rfb | RoyalVNCKit |
 |---|---|---|
@@ -207,19 +207,19 @@ the display 5–11 ms later with swift-rfb, against about 25 ms with RoyalVNCKit
 | context switches/s | 32.6–32.9 | 373–376 |
 | interrupt wakeups/s | 6.3–6.4 | 95.7–95.8 |
 | first update, first session | 1 695–2 086 ms | 2 398–2 465 ms |
-| first update, new session on a warm connection (`reopen-screen`) | 1 339–1 348 ms | 1 765–1 793 ms |
+| first update, new session on a warm connection | 1 339–1 348 ms | 1 765–1 793 ms |
 | same, with `eagerHandshake` | 311–770 ms | — |
 
-- **Idle wakeups.** The remaining swift-rfb wakeups on the real box come from
-  the app's gRPC connection and its event stream. The request pacer adds a
+- **Idle wakeups.** The remaining swift-rfb wakeups on the remote host come
+  from the app's own gRPC connection and event stream. The request pacer adds a
   1-second burst after each screen change.
 - **Handshake round trips.** Against x11vnc the coalesced handshake saves about
   2 round trips over RoyalVNCKit, and eager saves about 2 more. Eager leaves one
   round trip plus x11vnc's pause before it serves a new client, which varied
   from under 100 ms to about 450 ms.
-- **Throughput.** The real screen was idle during the runs, and read-only runs
-  cannot make it change. So its update rate comes from the netem and MockBox
-  measurements above.
+- **Throughput.** The remote screen was idle during the runs, and view-only
+  runs cannot make it change. So its update rate comes from the netem and
+  mock-server measurements above.
 
 ## Decode throughput
 

@@ -2,7 +2,7 @@ import Foundation
 import Network
 
 // pump-proxy LISTEN_PORT TARGET_PORT: one session at a time; client bytes go
-// through UpdatePump, server bytes straight back.
+// through RequestPump, server bytes straight back.
 
 let args = CommandLine.arguments
 guard args.count == 3, let listen = NWEndpoint.Port(args[1]), let target = NWEndpoint.Port(args[2]) else {
@@ -27,7 +27,7 @@ listener.newConnectionHandler = { client in
     client.start(queue: queue)
     server.start(queue: queue)
     let injected = Counter()
-    let pump = UpdatePump { injected.add() }
+    let pump = RequestPump { injected.add() }
     let (outbound, continuation) = AsyncStream<Data>.makeStream()
     let end: @Sendable () -> Void = {
         continuation.finish()

@@ -1,13 +1,14 @@
-// Copied from cocoonbox feat/macos@0ef99a3 macos/Sources/CocoonBoxKit/UpdatePump.swift for the A/B in
-// docs/benchmarks.md; the one change reads an extended ClientCutText's negative length, which the
-// original waits on forever.
+// A client-side request pump of the kind an embedding app ran in front of a
+// client that asks for one update per round trip; the baseline for the pacing
+// A/B in docs/benchmarks.md. It reads an extended ClientCutText's negative
+// length as the payload size.
 import Foundation
 import Synchronization
 
-// RFBClientTap follows the client-to-server RFB byte stream and forwards it in
+// ClientMessageTap follows the client-to-server RFB byte stream and forwards it in
 // whole messages, so extra messages can be spliced in between them. It keeps
 // the client's last FramebufferUpdateRequest in incremental form.
-public struct RFBClientTap: Sendable {
+public struct ClientMessageTap: Sendable {
     enum Stage: Sendable {
         case version
         case security
@@ -101,14 +102,14 @@ public struct RFBClientTap: Sendable {
     }
 }
 
-// UpdatePump keeps an incremental update request outstanding at the server
+// RequestPump keeps an incremental update request outstanding at the server
 // while the screen is changing. RFB servers answer one request with one
 // update, so without it the frame rate is capped at one per network round
 // trip. It repeats the client's own last request between client messages and
 // stops `linger` after the server goes quiet, so an idle screen costs nothing.
-final class UpdatePump: Sendable {
+final class RequestPump: Sendable {
     private struct State {
-        var tap = RFBClientTap()
+        var tap = ClientMessageTap()
         var lastActivity = ContinuousClock.now
         var running = false
         var finished = false

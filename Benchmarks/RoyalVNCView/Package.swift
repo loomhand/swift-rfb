@@ -2,7 +2,7 @@
 
 import PackageDescription
 
-// Baseline viewer on RoyalVNCKit 1.1.0 (the revision cocoonbox pinned), kept
+// Baseline viewer on RoyalVNCKit 1.1.0 (pinned by revision), kept
 // out of the main package so swift-rfb has no third-party dependency.
 let package = Package(
     name: "RoyalVNCView",

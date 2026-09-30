@@ -2,7 +2,7 @@
 
 import PackageDescription
 
-// pump-proxy puts cocoonbox's UpdatePump between an RFB client and server,
+// pump-proxy puts a client-side request pump between an RFB client and server,
 // to compare it with swift-rfb's own request pacing.
 let package = Package(
     name: "PumpProxy",
