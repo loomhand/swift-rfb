@@ -85,6 +85,10 @@ client.type("hello\n")
 client.setClipboard("text")
 ```
 
+`RFBView` also offers `onFirstFrame`, `onInput` (a key or button press was
+sent) and `onPresent` (a drawn frame reached the display) for latency
+measurements, plus `snapshot()`, `contentRect` and point conversion both ways.
+
 `RFBView` does this for AppKit events: buttons, scroll wheel as buttons 4–7,
 key codes and characters mapped to X11 keysyms (modifiers, arrows, function
 and keypad keys, dead keys), XT scancodes for QEMU's extended key event, and

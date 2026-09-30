@@ -13,6 +13,10 @@ import Synchronization
 public final class RFBView: NSView {
     public var client: RFBClient?
     public var onFirstFrame: (@MainActor () -> Void)?
+    // onInput runs when the view sends a key or button press; onPresent
+    // runs, off the main thread, when each drawn frame reaches the display.
+    public var onInput: (@MainActor () -> Void)?
+    public var onPresent: (@Sendable () -> Void)?
     public private(set) var framebufferSize = CGSize.zero
 
     // isInputEnabled forwards pointer and keyboard to the server; while
@@ -173,9 +177,11 @@ public final class RFBView: NSView {
         let overlay = !isInputEnabled ? cursor.flatMap { c in pointer.map { (c, $0.x, $0.y) } } : nil
         let client = client
         let first = !presentedFirst
-        var presented: (@Sendable () -> Void)?
+        var presented = onPresent
         if first {
+            let each = onPresent
             presented = { [weak self] in
+                each?()
                 Task { @MainActor in self?.onFirstFrame?() }
             }
         }
@@ -305,6 +311,7 @@ public final class RFBView: NSView {
         let clamped = CGPoint(x: min(max(location.x, rect.minX), rect.maxX - 0.5), y: min(max(location.y, rect.minY), rect.maxY - 0.5))
         guard let point = framebufferPoint(clamped) else { return }
         if down {
+            onInput?()
             buttons.insert(button)
             window?.makeFirstResponder(self)
         } else {
@@ -337,6 +344,7 @@ public final class RFBView: NSView {
         )
         guard let keysym else { return }
         pressed[event.keyCode] = keysym
+        onInput?()
         client.key(keysym, down: true, scancode: RFBKeyMap.scancode(keyCode: event.keyCode))
     }
 
