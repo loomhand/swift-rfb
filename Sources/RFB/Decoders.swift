@@ -89,7 +89,7 @@ final class Palette {
 
 final class ZRLEDecoder: RectDecoder {
     private let inflater: Inflater
-    private var scratch = Scratch(capacity: 1 << 20)
+    private var scratch = Scratch()
     private let palette = Palette()
 
     init() throws {
@@ -222,7 +222,7 @@ final class ZRLEDecoder: RectDecoder {
 
 final class TightDecoder: RectDecoder {
     private var streams: [Inflater]
-    private var scratch = Scratch(capacity: 1 << 20)
+    private var scratch = Scratch()
     private let palette = Palette()
     private var gradientRow: [Int] = []
 

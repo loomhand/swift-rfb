@@ -15,10 +15,11 @@ top -l 2 -s "$SECONDS_" -pid "$PID" -stats pid,cpu,idlew,mem >"$TOPLOG" 2>/dev/n
 TOPPID=$!
 STAT=$("$ROOT/.build/tools/procstat" "$PID" "$SECONDS_")
 wait "$TOPPID" || true
+RSS=$(ps -o rss= -p "$PID" | awk '{printf "%.1f", $1 / 1024}')
 kill "$PID" 2>/dev/null || true
 wait "$PID" 2>/dev/null || true
 TOP=$(awk -v p="$PID" '$1 == p' "$TOPLOG" | tail -1 | awk '{print "cpu="$2"% idlew="$3" mem="$4}')
-echo "$LABEL | $STAT | top: $TOP"
+echo "$LABEL | $STAT rss_mb=$RSS | top: $TOP"
 { grep -E "first_|connected_ms|error|disconnected" "$LOG" || true; } | tr '\n' ' ' | sed 's/^/    /'
 echo
 rm -f "$LOG" "$TOPLOG"

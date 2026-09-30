@@ -100,6 +100,8 @@ public final class RFBTCPTransport: RFBTransport {
             connection.receive(minimumIncompleteLength: min(max(count, 1), 1 << 20), maximumLength: max(count, 1 << 20)) { data, _, isComplete, error in
                 if let data, !data.isEmpty {
                     continuation.resume(returning: data)
+                } else if case .posix(.ECANCELED) = error {
+                    continuation.resume(throwing: RFBError.connectionClosed)
                 } else if let error {
                     continuation.resume(throwing: RFBError.transport("\(error)"))
                 } else if isComplete {
