@@ -5,6 +5,8 @@ no work while the remote screen is still: no timers, no polling, no display
 link ticks. Decoders write straight into page-aligned memory that the GPU
 reads as a texture, so an update costs one decode and one draw.
 
+**Documentation: [loomhand.github.io/swift-rfb](https://loomhand.github.io/swift-rfb/)** (source in [`docs/`](docs/)).
+
 - `RFB` — protocol, decoders, input mapping. Foundation, Network, zlib,
   CommonCrypto, ImageIO; no AppKit.
 - `RFBMetal` — `RFBRenderer` (Metal, platform-neutral) and `RFBView`
@@ -13,6 +15,43 @@ reads as a texture, so an update costs one decode and one draw.
 
 Requires Swift 6, macOS 15 (iOS 18 for the platform-neutral parts). No
 third-party dependencies.
+
+## Architecture
+
+```
+RFB server (x11vnc, TigerVNC, ...)
+   │ ▲
+   │ │ input, update requests
+   ▼ │
+RFBTransport ── RFBTCPTransport (Network.framework) or RFBPipe (any byte stream)
+   │ ▲
+   ▼ │
+RFBClient.run ── handshake → message reader → decoders (Raw, CopyRect, Hextile, ZRLE, Tight)
+   │                                               │ write in place
+   │                                               ▼
+   │                                          RFBFramebuffer (page-aligned BGRX)
+   │ RFBEvent (connected, resized, updated, cursor, clipboard, ...)
+   ▼
+RFBView ── RFBRenderer: Metal texture over the framebuffer memory, one draw per change
+   │
+   └─► framebufferConsumed() once the GPU has read the frame → next update request
+```
+
+## Install
+
+Add the package with Swift Package Manager:
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/loomhand/swift-rfb.git", branch: "main"),
+],
+targets: [
+    .target(name: "MyApp", dependencies: [
+        .product(name: "RFB", package: "swift-rfb"),
+        .product(name: "RFBMetal", package: "swift-rfb"),
+    ]),
+]
+```
 
 ## Usage
 
@@ -150,11 +189,20 @@ break Foundation imports; `scripts/toolchain.sh` masks them without touching
 `/Library`.
 
 ```sh
-source scripts/toolchain.sh
-swift build -c release --product rfb-view
-scripts/test.sh                     # swift-testing suite, run as an executable
+make build                          # debug build of every target
+make release                        # release rfb-view and rfb-bench
+make test                           # swift-testing suite, run as an executable
+make help                           # list the targets
 scripts/servers.sh region           # x11vnc :5901, TigerVNC :5902, x11vnc+password :5903
 .build/release/rfb-view 127.0.0.1:5901 [--control] [--password PW]
+```
+
+The make targets source `scripts/toolchain.sh` themselves. Without make:
+
+```sh
+source scripts/toolchain.sh
+swift build -c release --product rfb-view
+scripts/test.sh
 ```
 
 The tests cover the handshake state machine, every decoder against encoded
@@ -162,3 +210,25 @@ fixtures, server recordings from x11vnc and TigerVNC (every lossless encoding
 must rebuild the same framebuffer as raw), pacing, fences, continuous
 updates, clipboard and the key map. Measurements are in
 [docs/benchmarks.md](docs/benchmarks.md).
+
+`scripts/servers.sh` runs the `swift-rfb-scene` image; build it from
+`docker/` first (`docker build -t swift-rfb-scene docker`).
+
+## Documentation
+
+- [Benchmarks](docs/benchmarks.md): CPU, wakeups, first-frame latency,
+  high-latency pacing and decode throughput against RoyalVNCKit, with the
+  method to reproduce them.
+
+## Related projects
+
+- [loomhand/cocoonbox](https://github.com/loomhand/cocoonbox): persistent
+  cloud computers; its macOS client uses swift-rfb to show the remote desktop.
+- [loomhand/cua](https://github.com/loomhand/cua): open-source computer-use
+  drivers, cross-OS fleets and benchmarks.
+- [cocoonstack/cocoon](https://github.com/cocoonstack/cocoon): MicroVM engine
+  on Cloud Hypervisor.
+
+## License
+
+[MIT](LICENSE)
