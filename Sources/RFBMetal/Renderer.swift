@@ -16,23 +16,23 @@ public final class RFBRenderer: @unchecked Sendable {
     }
 
     private static let shaders = """
-    #include <metal_stdlib>
-    using namespace metal;
-    struct VOut { float4 position [[position]]; float2 uv; };
-    vertex VOut place(uint vid [[vertex_id]], constant float4 &rect [[buffer(0)]]) {
-        float2 corner = float2(vid & 1, vid >> 1);
-        VOut out;
-        out.position = float4(mix(rect.xy, rect.zw, corner), 0, 1);
-        out.uv = float2(corner.x, 1 - corner.y);
-        return out;
-    }
-    fragment half4 opaque(VOut in [[stage_in]], texture2d<half> tex [[texture(0)]], sampler s [[sampler(0)]]) {
-        return half4(tex.sample(s, in.uv).rgb, 1);
-    }
-    fragment half4 blended(VOut in [[stage_in]], texture2d<half> tex [[texture(0)]], sampler s [[sampler(0)]]) {
-        return tex.sample(s, in.uv);
-    }
-    """
+        #include <metal_stdlib>
+        using namespace metal;
+        struct VOut { float4 position [[position]]; float2 uv; };
+        vertex VOut place(uint vid [[vertex_id]], constant float4 &rect [[buffer(0)]]) {
+            float2 corner = float2(vid & 1, vid >> 1);
+            VOut out;
+            out.position = float4(mix(rect.xy, rect.zw, corner), 0, 1);
+            out.uv = float2(corner.x, 1 - corner.y);
+            return out;
+        }
+        fragment half4 opaque(VOut in [[stage_in]], texture2d<half> tex [[texture(0)]], sampler s [[sampler(0)]]) {
+            return half4(tex.sample(s, in.uv).rgb, 1);
+        }
+        fragment half4 blended(VOut in [[stage_in]], texture2d<half> tex [[texture(0)]], sampler s [[sampler(0)]]) {
+            return tex.sample(s, in.uv);
+        }
+        """
 
     public let device: MTLDevice
     private let queue: MTLCommandQueue
@@ -43,7 +43,7 @@ public final class RFBRenderer: @unchecked Sendable {
 
     public init?(device: MTLDevice) {
         guard let queue = device.makeCommandQueue(),
-              let library = try? device.makeLibrary(source: Self.shaders, options: nil)
+            let library = try? device.makeLibrary(source: Self.shaders, options: nil)
         else { return nil }
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = library.makeFunction(name: "place")
@@ -73,7 +73,7 @@ public final class RFBRenderer: @unchecked Sendable {
 
     public func makeSurface(_ framebuffer: RFBFramebuffer) -> Surface? {
         guard framebuffer.bytesPerRow % device.minimumLinearTextureAlignment(for: .bgra8Unorm) == 0,
-              let buffer = device.makeBuffer(bytesNoCopy: framebuffer.baseAddress, length: framebuffer.length, options: .storageModeShared, deallocator: nil)
+            let buffer = device.makeBuffer(bytesNoCopy: framebuffer.baseAddress, length: framebuffer.length, options: .storageModeShared, deallocator: nil)
         else { return nil }
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: framebuffer.width, height: framebuffer.height, mipmapped: false)
         descriptor.storageMode = .shared

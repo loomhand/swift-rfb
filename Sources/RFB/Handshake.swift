@@ -91,7 +91,7 @@ enum Handshake {
     static func minorVersion(_ banner: String) throws -> Int {
         let parts = banner.dropFirst(4).dropLast().split(separator: ".")
         guard banner.hasPrefix("RFB "), banner.hasSuffix("\n"), parts.count == 2,
-              let major = Int(parts[0]), let minor = Int(parts[1]), major >= 3
+            let major = Int(parts[0]), let minor = Int(parts[1]), major >= 3
         else { throw RFBError.unsupportedVersion(banner) }
         if major > 3 || minor >= 8 { return 8 }
         if minor == 7 { return 7 }
@@ -142,8 +142,9 @@ enum Handshake {
         }
         var out = [UInt8](repeating: 0, count: 16)
         var moved = 0
-        let status = CCCrypt(CCOperation(kCCEncrypt), CCAlgorithm(kCCAlgorithmDES), CCOptions(kCCOptionECBMode),
-                             key, kCCKeySizeDES, nil, challenge, 16, &out, 16, &moved)
+        let status = CCCrypt(
+            CCOperation(kCCEncrypt), CCAlgorithm(kCCAlgorithmDES), CCOptions(kCCOptionECBMode),
+            key, kCCKeySizeDES, nil, challenge, 16, &out, 16, &moved)
         guard status == kCCSuccess, moved == 16 else { throw RFBError.authenticationFailed("DES status \(status)") }
         return out
     }

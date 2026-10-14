@@ -1,7 +1,8 @@
 import Foundation
-@testable import RFB
 import Synchronization
 import zlib
+
+@testable import RFB
 
 struct Bytes {
     var data: [UInt8] = []

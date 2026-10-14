@@ -1,8 +1,9 @@
 import CoreGraphics
 import Foundation
 import ImageIO
-@testable import RFB
 import Testing
+
+@testable import RFB
 
 // Each test encodes known pixels the way a server would, feeds them through
 // the client and compares the framebuffer.
@@ -301,11 +302,13 @@ import Testing
     static func jpeg(_ px: [UInt32], _ w: Int, _ h: Int) -> [UInt8]? {
         var bytes = px
         let data = NSMutableData()
-        guard let context = CGContext(data: &bytes, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
-                                      space: CGColorSpaceCreateDeviceRGB(),
-                                      bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue),
-              let image = context.makeImage(),
-              let destination = CGImageDestinationCreateWithData(data, "public.jpeg" as CFString, 1, nil)
+        guard
+            let context = CGContext(
+                data: &bytes, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue),
+            let image = context.makeImage(),
+            let destination = CGImageDestinationCreateWithData(data, "public.jpeg" as CFString, 1, nil)
         else { return nil }
         CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.95] as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { return nil }

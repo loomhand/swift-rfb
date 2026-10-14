@@ -29,9 +29,11 @@ final class Session {
         let configuration = client.configuration
         // the first request predates ServerInit, so it asks for the largest
         // rectangle and the server clips it to the framebuffer.
-        let opening = Message.setPixelFormat().bytes + Message.setEncodings(configuration.advertised).bytes
+        let opening =
+            Message.setPixelFormat().bytes + Message.setEncodings(configuration.advertised).bytes
             + Message.updateRequest(incremental: false, RFBRect(x: 0, y: 0, width: 0xFFFF, height: 0xFFFF)).bytes
-        let info = try await Handshake.negotiate(reader, transport: client.transport, password: configuration.password, shared: configuration.shared, eager: configuration.eagerHandshake, opening: opening)
+        let info = try await Handshake.negotiate(
+            reader, transport: client.transport, password: configuration.password, shared: configuration.shared, eager: configuration.eagerHandshake, opening: opening)
         let framebuffer = try RFBFramebuffer(width: info.width, height: info.height)
         self.framebuffer = framebuffer
         client.shared.withLock { s in

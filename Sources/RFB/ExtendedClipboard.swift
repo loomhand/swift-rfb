@@ -18,10 +18,11 @@ struct ExtendedClipboard {
             outcome.serverCaps = flags
             var caps = Message()
             caps.u32(Self.maxText)
-            outcome.replies.append(.extendedCutText(
-                flags: Clipboard.caps | Clipboard.request | Clipboard.peek | Clipboard.notify | Clipboard.provide | Clipboard.text,
-                payload: caps.bytes
-            ))
+            outcome.replies.append(
+                .extendedCutText(
+                    flags: Clipboard.caps | Clipboard.request | Clipboard.peek | Clipboard.notify | Clipboard.provide | Clipboard.text,
+                    payload: caps.bytes
+                ))
             return outcome
         }
         let text = flags & Clipboard.text != 0

@@ -36,10 +36,12 @@ listener.newConnectionHandler = { client in
         print("session ended, injected \(injected.value) requests")
     }
     pipe(client, { continuation.yield($0) }, end)
-    pipe(server, { data in
-        pump.serverActivity()
-        client.send(content: data, completion: .idempotent)
-    }, end)
+    pipe(
+        server,
+        { data in
+            pump.serverActivity()
+            client.send(content: data, completion: .idempotent)
+        }, end)
     Task { await pump.forward(outbound) }
     Task {
         for await chunk in pump.stream { server.send(content: chunk, completion: .idempotent) }

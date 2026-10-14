@@ -1,6 +1,7 @@
 import Foundation
-@testable import RFB
 import Testing
+
+@testable import RFB
 
 @Suite struct HandshakeTests {
     @Test(arguments: [

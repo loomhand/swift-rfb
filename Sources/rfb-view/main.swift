@@ -113,7 +113,9 @@ final class Viewer: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     case .clipboard(let text):
                         Task { @MainActor in self?.remoteClipboard(text) }
                     case .updated:
-                        if firstUpdate.withLock({ f in defer { f = true }; return !f }) {
+                        if firstUpdate.withLock({ f in
+                            defer { f = true }; return !f
+                        }) {
                             print("first_update_since_connect_ms=\(Viewer.ms(ContinuousClock.now - connectStarted))")
                         }
                     default:
@@ -133,12 +135,14 @@ final class Viewer: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let view, let window, let point = view.viewPoint(framebufferX: 123, y: 456) else { return }
         let location = view.convert(point, to: nil)
         func mouse(_ type: NSEvent.EventType) -> NSEvent? {
-            NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
-                               context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+            NSEvent.mouseEvent(
+                with: type, location: location, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
         }
         func key(_ type: NSEvent.EventType, _ code: UInt16, _ chars: String) -> NSEvent? {
-            NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
-                             context: nil, characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)
+            NSEvent.keyEvent(
+                with: type, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                context: nil, characters: chars, charactersIgnoringModifiers: chars, isARepeat: false, keyCode: code)
         }
         mouse(.mouseMoved).map(view.mouseMoved)
         mouse(.leftMouseDown).map(view.mouseDown)

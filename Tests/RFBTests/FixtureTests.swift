@@ -1,6 +1,7 @@
 import Foundation
-@testable import RFB
 import Testing
+
+@testable import RFB
 
 // The fixtures are the server side of real sessions (docker/, 320x200 static
 // scene) recorded by rfb-bench; every lossless encoding must rebuild the

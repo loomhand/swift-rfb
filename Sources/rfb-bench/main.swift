@@ -120,18 +120,21 @@ func milliseconds(_ d: Duration) -> String {
 }
 
 func report(_ stats: RFBStatistics, seconds: Double, label: String) {
-    print("== \(label): \(stats.updates) updates in \(String(format: "%.2f", seconds)) s = \(String(format: "%.1f", Double(stats.updates) / seconds)) updates/s, wire \(String(format: "%.2f", Double(stats.bytes) / 1e6)) MB, continuous=\(stats.continuousUpdates) fences=\(stats.fences) extclipboard=\(stats.extendedClipboard)")
+    print(
+        "== \(label): \(stats.updates) updates in \(String(format: "%.2f", seconds)) s = \(String(format: "%.1f", Double(stats.updates) / seconds)) updates/s, wire \(String(format: "%.2f", Double(stats.bytes) / 1e6)) MB, continuous=\(stats.continuousUpdates) fences=\(stats.fences) extclipboard=\(stats.extendedClipboard)"
+    )
     for (encoding, e) in stats.encodings.sorted(by: { $0.value.pixels > $1.value.pixels }) {
         let decodeSeconds = Double(e.nanoseconds) / 1e9
         if e.pixels == 0 {
             print("   \(encoding): \(e.rects) rects")
             continue
         }
-        print(String(
-            format: "   %@: %d rects, %.1f Mpx, %.2f MB wire, decode %.1f ms = %.0f MB/s wire, %.0f Mpx/s",
-            encoding.description, e.rects, Double(e.pixels) / 1e6, Double(e.bytes) / 1e6, decodeSeconds * 1e3,
-            Double(e.bytes) / 1e6 / max(decodeSeconds, 1e-9), Double(e.pixels) / 1e6 / max(decodeSeconds, 1e-9)
-        ))
+        print(
+            String(
+                format: "   %@: %d rects, %.1f Mpx, %.2f MB wire, decode %.1f ms = %.0f MB/s wire, %.0f Mpx/s",
+                encoding.description, e.rects, Double(e.pixels) / 1e6, Double(e.bytes) / 1e6, decodeSeconds * 1e3,
+                Double(e.bytes) / 1e6 / max(decodeSeconds, 1e-9), Double(e.pixels) / 1e6 / max(decodeSeconds, 1e-9)
+            ))
     }
 }
 
@@ -204,7 +207,9 @@ func replay(_ options: Options) async throws {
         let elapsed = ContinuousClock.now - started
         let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
         let stats = client.statistics
-        report(stats, seconds: seconds, label: "replay \(path) #\(iteration) (\(String(format: "%.0f", Double(stats.updates) / seconds)) frames/s, \(String(format: "%.0f", Double(stream.count) / 1e6 / seconds)) MB/s)")
+        report(
+            stats, seconds: seconds,
+            label: "replay \(path) #\(iteration) (\(String(format: "%.0f", Double(stats.updates) / seconds)) frames/s, \(String(format: "%.0f", Double(stream.count) / 1e6 / seconds)) MB/s)")
     }
 }
 
@@ -226,7 +231,11 @@ func interact(_ options: Options, act: @escaping @Sendable (RFBClient) -> Void) 
         try await client.run { event in
             switch event {
             case .updated:
-                guard acted.withLock({ a in defer { a = true }; return !a }) else { return }
+                guard
+                    acted.withLock({ a in
+                        defer { a = true }; return !a
+                    })
+                else { return }
                 act(client)
             case .clipboard(let text):
                 print("clipboard: \(text.debugDescription)")

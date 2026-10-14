@@ -339,9 +339,11 @@ public final class RFBView: NSView {
 
     public override func keyDown(with event: NSEvent) {
         guard isInputEnabled, let client else { return super.keyDown(with: event) }
-        let keysym = pressed[event.keyCode] ?? RFBKeyMap.keysym(
-            keyCode: event.keyCode, characters: event.charactersIgnoringModifiers, deadKey: event.characters?.isEmpty == true
-        )
+        let keysym =
+            pressed[event.keyCode]
+            ?? RFBKeyMap.keysym(
+                keyCode: event.keyCode, characters: event.charactersIgnoringModifiers, deadKey: event.characters?.isEmpty == true
+            )
         guard let keysym else { return }
         pressed[event.keyCode] = keysym
         onInput?()
@@ -356,7 +358,7 @@ public final class RFBView: NSView {
 
     public override func flagsChanged(with event: NSEvent) {
         guard isInputEnabled, let client, let keysym = RFBKeyMap.keysym(keyCode: event.keyCode, characters: nil),
-              let flag = Self.modifierFlag(event.keyCode)
+            let flag = Self.modifierFlag(event.keyCode)
         else { return super.flagsChanged(with: event) }
         let scancode = RFBKeyMap.scancode(keyCode: event.keyCode)
         if flag == .capsLock {

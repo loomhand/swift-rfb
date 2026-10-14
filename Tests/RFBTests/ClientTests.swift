@@ -1,7 +1,8 @@
 import Foundation
-@testable import RFB
 import Synchronization
 import Testing
+
+@testable import RFB
 
 @Suite struct ClientTests {
     func emptyUpdate() -> [UInt8] {
