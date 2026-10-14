@@ -107,8 +107,10 @@ final class Server: @unchecked Sendable {
         let header = await read(4)
         let count = Int(header[2]) << 8 | Int(header[3])
         let list = await read(count * 4)
-        let encodings = stride(from: 0, to: list.count, by: 4).map {
-            Int32(bitPattern: UInt32(list[$0]) << 24 | UInt32(list[$0 + 1]) << 16 | UInt32(list[$0 + 2]) << 8 | UInt32(list[$0 + 3]))
+        let encodings = stride(from: 0, to: list.count, by: 4).map { i -> Int32 in
+            let high: UInt32 = UInt32(list[i]) << 24 | UInt32(list[i + 1]) << 16
+            let low: UInt32 = UInt32(list[i + 2]) << 8 | UInt32(list[i + 3])
+            return Int32(bitPattern: high | low)
         }
         return (encodings, await read(10))
     }
