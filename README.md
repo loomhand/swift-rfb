@@ -43,7 +43,7 @@ Add the package with Swift Package Manager:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/loomhand/swift-rfb.git", branch: "main"),
+    .package(url: "https://github.com/loomhand/swift-rfb.git", from: "0.1.0"),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [
