@@ -3,3 +3,4 @@
 *.rfbrec.tmp
 .DS_Store
 xcuserdata/
+/dist/
