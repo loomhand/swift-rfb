@@ -16,6 +16,8 @@ jobs:
         run: |
           sudo xcode-select -s /Library/Developer/CommandLineTools
           swift --version
+      - name: Lint
+        run: make lint
       - name: Build
         run: make build
       - name: Test

@@ -1,3 +1,5 @@
 .build/
 .swiftpm/
 *.rfbrec.tmp
+.DS_Store
+xcuserdata/
