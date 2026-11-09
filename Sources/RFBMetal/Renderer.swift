@@ -8,6 +8,9 @@ public final class RFBRenderer: @unchecked Sendable {
     public struct Surface: @unchecked Sendable {
         public let framebuffer: RFBFramebuffer
         let texture: MTLTexture
+        // staging is set on the Simulator, which has no linear textures over
+        // shared buffers: the framebuffer is blitted into texture each draw.
+        let staging: MTLBuffer?
     }
 
     public struct CursorImage: @unchecked Sendable {
@@ -76,10 +79,16 @@ public final class RFBRenderer: @unchecked Sendable {
             let buffer = device.makeBuffer(bytesNoCopy: framebuffer.baseAddress, length: framebuffer.length, options: .storageModeShared, deallocator: nil)
         else { return nil }
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: framebuffer.width, height: framebuffer.height, mipmapped: false)
-        descriptor.storageMode = .shared
         descriptor.usage = .shaderRead
+        #if targetEnvironment(simulator)
+        descriptor.storageMode = .private
+        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
+        return Surface(framebuffer: framebuffer, texture: texture, staging: buffer)
+        #else
+        descriptor.storageMode = .shared
         guard let texture = buffer.makeTexture(descriptor: descriptor, offset: 0, bytesPerRow: framebuffer.bytesPerRow) else { return nil }
-        return Surface(framebuffer: framebuffer, texture: texture)
+        return Surface(framebuffer: framebuffer, texture: texture, staging: nil)
+        #endif
     }
 
     public func makeCursor(_ cursor: RFBCursor) -> CursorImage? {
@@ -100,6 +109,15 @@ public final class RFBRenderer: @unchecked Sendable {
         presented: (@Sendable () -> Void)? = nil, completed: @escaping @Sendable () -> Void
     ) -> Bool {
         guard let drawable = layer.nextDrawable(), let commands = queue.makeCommandBuffer() else { return false }
+        if let staging = surface.staging {
+            let fb = surface.framebuffer
+            guard let blit = commands.makeBlitCommandEncoder() else { return false }
+            blit.copy(
+                from: staging, sourceOffset: 0, sourceBytesPerRow: fb.bytesPerRow, sourceBytesPerImage: fb.length,
+                sourceSize: MTLSize(width: fb.width, height: fb.height, depth: 1),
+                to: surface.texture, destinationSlice: 0, destinationLevel: 0, destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
+            blit.endEncoding()
+        }
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = drawable.texture
         pass.colorAttachments[0].loadAction = .dontCare
@@ -126,12 +144,21 @@ public final class RFBRenderer: @unchecked Sendable {
             encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         }
         encoder.endEncoding()
+        #if targetEnvironment(simulator)
+        // The Simulator SDK has no MTLDrawable.addPresentedHandler, so presented
+        // runs when the GPU completes, just before the drawable is shown.
+        commands.addCompletedHandler { _ in
+            withExtendedLifetime(fb) { completed() }
+            presented?()
+        }
+        #else
         if let presented {
             drawable.addPresentedHandler { _ in presented() }
         }
         commands.addCompletedHandler { _ in
             withExtendedLifetime(fb) { completed() }
         }
+        #endif
         commands.present(drawable)
         commands.commit()
         return true
